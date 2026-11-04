@@ -1,4 +1,4 @@
-const VERSAO = 'v14';
+const VERSAO = 'v15';
 const ARQUIVOS = [
   './',
   'index.html',
