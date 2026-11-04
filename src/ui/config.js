@@ -1,9 +1,11 @@
 // Tela Config: contrato e dados iniciais (formulário), premissas (premissas.js) e backup.
 import { obter, salvar, exportarTudo, importarTudo, contagens, valorCompra } from '../db.js';
 import { montarPremissas } from './premissas.js';
+import { depositoFGTS } from '../scenario.js';
+import { somaMeses } from '../engine.js';
 import { $, R, num, nBR, esc, ic, toast, rotuloMes } from './comum.js';
 
-// [grupo, campo, rótulo, tipo, dica, unidade]. tipo: n = número, i = inteiro, p = taxa guardada em decimal e mostrada em %, t = texto, d = data, m = mês
+// [grupo, campo, rótulo, tipo, dica, unidade]. tipo: n = número, i = inteiro, p = taxa guardada em decimal e mostrada em %, t = texto, d = data
 const CAMPOS = [
   ['contrato', 'numeroContrato', 'Número do contrato', 't', '', ''],
   ['contrato', 'dataAssinatura', 'Assinatura', 'd', '', ''],
@@ -20,13 +22,11 @@ const CAMPOS = [
   ['inicial', 'documentacao', 'Documentação', 'n', 'ITBI, cartório, registro (obrigatório)', 'R$'],
   ['inicial', 'saldoFGTSAtual', 'Saldo inicial do FGTS', 'n', 'preencha uma vez, com a data do extrato', 'R$'], // nome antigo do campo
   ['inicial', 'dataSaldoFGTS', 'Data do saldo inicial', 'd', '', ''],
-  ['inicial', 'depositoMensalFGTS', 'Depósito mensal no FGTS', 'n', '8% do salário', 'R$'],
-  ['inicial', 'depositoFGTSDesde', 'Depósito valendo desde', 'm', 'quando aumentar, troque o valor e o mês', ''],
 ];
 const pct2dec = x => Number((x / 100).toPrecision(12));
 const mostrar = (v, t) => (v == null ? '' : t === 'p' ? nBR(v * 100, 4) : t === 'n' ? nBR(v, 2) : v);
 const linha = (g, c, r, t, dica, u, cfg) => `<div class="settingrow"><label for="c-${g}-${c}">${r}<span class="src">${esc(dica)}</span></label>
-  <div class="inp"><input id="c-${g}-${c}" name="${g}.${c}" ${t === 'd' ? 'type="date"' : t === 'm' ? 'type="month"' : t === 't' ? 'type="text"' : t === 'i' ? 'inputmode="numeric"' : 'inputmode="decimal" data-max="4"'} value="${esc(mostrar(cfg[g][c], t))}"${c === 'documentacao' ? ' required' : ''}><span>${u}</span></div></div>`;
+  <div class="inp"><input id="c-${g}-${c}" name="${g}.${c}" ${t === 'd' ? 'type="date"' : t === 't' ? 'type="text"' : t === 'i' ? 'inputmode="numeric"' : 'inputmode="decimal" data-max="4"'} value="${esc(mostrar(cfg[g][c], t))}"${c === 'documentacao' ? ' required' : ''}><span>${u}</span></div></div>`;
 const cartao = (tit, sub, g, cfg) => `<div><div class="kicker">${tit}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>${CAMPOS.filter(x => x[0] === g).map(x => linha(...x, cfg)).join('')}`;
 
 export async function montarConfig(el) {
@@ -35,7 +35,10 @@ export async function montarConfig(el) {
   el.innerHTML = `<form id="cfg-form" style="display:contents" autocomplete="off">
     <article class="card">${cartao('Contrato', '', 'contrato', cfg)}</article>
     <article class="card">${cartao('Dados iniciais', 'Preenchidos uma vez. Entram no patrimônio e no quanto gastei.', 'inicial', cfg)}
+      <div><div style="font-weight:600">Valor médio por mês no FGTS</div><div class="sub">Quanto entra no FGTS por mês, em média. Cada valor vale do mês dele em diante; os meses antes continuam com o valor anterior. Quando aumentar, adicione o valor novo.</div></div>
       <div id="cfg-dep"></div>
+      <div class="sub" style="font-weight:600;color:var(--ink)">Novo valor médio: a partir de qual mês e o valor</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><div class="inp sm" style="flex:1 1 140px"><input type="month" id="dep-mes" aria-label="A partir de (mês e ano)"></div><div class="inp sm" style="flex:1 1 120px"><span>R$</span><input id="dep-val" inputmode="decimal" aria-label="Valor médio por mês" placeholder="0,00"></div><button class="btn" type="button" id="dep-add" style="min-height:44px">Adicionar</button></div>
       <div class="sub" id="cfg-fg"></div>
       <div class="row" style="padding-top:4px"><span class="sub">Valor de compra do imóvel (calculado)</span><b id="cfg-vc"></b></div>
       <button class="btn primary block" type="submit">Salvar dados</button></article>
@@ -61,47 +64,53 @@ export async function montarConfig(el) {
     return novo;
   };
   // FGTS: quanto cresce por mês e em 24 meses (uma janela), com 3% a.a. e o 13º em dobro em dezembro; sem TR (é pequena)
-  const fgtsHint = ({ saldoFGTSAtual: s, dataSaldoFGTS: dt, depositoMensalFGTS: dep }) => {
-    if (s == null || !dep) return 'Com o saldo inicial e o depósito mensal preenchidos, o app soma sozinho, mês a mês, os depósitos e o rendimento, e desconta os usos do FGTS que você lançar.';
-    const r = 1.03 ** (1 / 12) - 1, mes0 = +(dt ?? new Date().toISOString()).slice(5, 7);
-    let v = s;
-    for (let k = 1; k <= 24; k++) v = v * (1 + r) + dep * ((mes0 + k - 1) % 12 === 11 ? 2 : 1);
-    return `A partir do saldo inicial, o app soma sozinho os depósitos e o rendimento e desconta os usos que você lançar. O FGTS cresce cerca de <b>${R(dep + s * r)}</b> por mês (depósito + 3% a.a.; dezembro em dobro); 24 meses depois da data do saldo inicial, sem usos, chega a cerca de <b>${R(v, 0)}</b>.`;
+  const fgtsHint = ({ saldoFGTSAtual: s, dataSaldoFGTS: dt, depositoMensalFGTS: dep, depositosFGTS: depositos }) => {
+    if (s == null || !dep) return 'Com o saldo inicial e um valor médio por mês cadastrados, o app soma sozinho, mês a mês, esse valor e o rendimento, e desconta os usos do FGTS que você lançar.';
+    const r = 1.03 ** (1 / 12) - 1, fg = { deposito: dep, depositos }, hoje = new Date().toISOString().slice(0, 7);
+    let v = s, c = (dt ?? new Date().toISOString()).slice(0, 7);
+    for (let k = 1; k <= 24; k++) { c = somaMeses(c + '-01', 1).slice(0, 7); v = v * (1 + r) + depositoFGTS(fg, c) * (c.endsWith('-12') ? 2 : 1); }
+    return `A partir do saldo inicial, o app soma sozinho o valor médio de cada mês e o rendimento e desconta os usos que você lançar. Hoje o FGTS cresce cerca de <b>${R(depositoFGTS(fg, hoje) + s * r)}</b> por mês (valor médio + 3% a.a.; dezembro em dobro); 24 meses depois da data do saldo inicial, sem usos, chega a cerca de <b>${R(v, 0)}</b>.`;
   };
   const calc = () => { const c = ler(); $('#cfg-vc', el).textContent = R(valorCompra(c)); $('#cfg-fg', el).innerHTML = fgtsHint(c.inicial); };
   form.addEventListener('input', calc);
   calc();
   form.addEventListener('submit', async e => {
     e.preventDefault();
-    const novo = ler(), ini = novo.inicial;
-    if (ini.documentacao == null) return toast('Documentação é obrigatória.', 4500);
-    // depósito com mês: entra no histórico (mesmo mês substitui); os campos voltam a mostrar o mais recente
-    if (ini.depositoMensalFGTS != null && ini.depositoFGTSDesde) ini.depositosFGTS = [...(ini.depositosFGTS ?? []).filter(d => d.desde !== ini.depositoFGTSDesde), { desde: ini.depositoFGTSDesde, valor: ini.depositoMensalFGTS }];
-    await gravar(novo);
-    toast('Dados salvos.');
-  });
-  const gravar = async novo => {
-    const ini = novo.inicial, h = (ini.depositosFGTS ?? []).sort((a, b) => (a.desde < b.desde ? -1 : 1)), ult = h.at(-1);
-    if (ult) { ini.depositoMensalFGTS = ult.valor; ini.depositoFGTSDesde = ult.desde; }
+    const novo = ler();
+    if (novo.inicial.documentacao == null) return toast('Documentação é obrigatória.', 4500);
     await salvar('config', novo);
     Object.assign(cfg, novo);
-    form.elements['inicial.depositoMensalFGTS'].value = mostrar(ini.depositoMensalFGTS, 'n');
-    form.elements['inicial.depositoFGTSDesde'].value = ini.depositoFGTSDesde ?? '';
-    historico(); calc();
+    toast('Dados salvos.');
+  });
+
+  // depósitos do FGTS: lista [{desde, valor}] gravada na hora (não depende do "Salvar dados");
+  // depositoMensalFGTS espelha o mais recente (estimativa acima e cadastros antigos, sem lista)
+  const listaDep = () => {
+    const h = cfg.inicial.depositosFGTS ?? [], antigo = !h.length && cfg.inicial.depositoMensalFGTS != null;
+    $('#cfg-dep', el).innerHTML = (antigo ? [{ desde: null, valor: cfg.inicial.depositoMensalFGTS }] : h).map(d => `<div class="row" style="min-height:44px;border-bottom:1px solid var(--line)"><span>${d.desde ? `a partir de <b>${rotuloMes(d.desde)}</b>` : 'todos os meses'}</span><span><b>${R(d.valor)}</b> <button type="button" class="btn" style="min-height:36px;padding:0 12px;margin-left:6px" data-dep="${d.desde ?? ''}" aria-label="Apagar o valor ${d.desde ? 'de ' + rotuloMes(d.desde) : ''}">×</button></span></div>`).join('')
+      || '<div class="sub">Nenhum valor cadastrado.</div>';
   };
-  // histórico do depósito: cada valor vale do mês dele até o próximo
-  const historico = () => {
-    const h = cfg.inicial.depositosFGTS ?? [];
-    $('#cfg-dep', el).innerHTML = h.length < 2 ? '' : `<div class="sub" style="margin-bottom:4px">Histórico do depósito</div>${h.map(d => `<div class="row" style="min-height:36px;border-bottom:1px solid var(--line)"><span>desde ${rotuloMes(d.desde)}</span><span><b>${R(d.valor)}</b> <button type="button" class="btn" style="min-height:32px;padding:0 10px;margin-left:6px" data-dep="${d.desde}" aria-label="Apagar o depósito de ${rotuloMes(d.desde)}">×</button></span></div>`).join('')}`;
+  const gravarDep = async lista => {
+    const novo = structuredClone(cfg), h = lista.sort((a, b) => (a.desde < b.desde ? -1 : 1));
+    novo.inicial.depositosFGTS = h;
+    novo.inicial.depositoMensalFGTS = h.at(-1)?.valor ?? null;
+    await salvar('config', novo);
+    Object.assign(cfg, novo);
+    listaDep(); calc();
+  };
+  $('#dep-add', el).onclick = async () => {
+    const desde = $('#dep-mes', el).value, valor = num($('#dep-val', el).value);
+    if (!desde || !(valor > 0)) return toast('Informe o mês e o valor médio.', 4500);
+    await gravarDep([...(cfg.inicial.depositosFGTS ?? []).filter(d => d.desde !== desde), { desde, valor }]); // mesmo mês substitui
+    $('#dep-mes', el).value = ''; $('#dep-val', el).value = '';
+    toast(`${R(valor)} por mês a partir de ${rotuloMes(desde)}.`);
   };
   $('#cfg-dep', el).onclick = async e => {
     const b = e.target.closest('[data-dep]'); if (!b) return;
-    const novo = structuredClone(cfg);
-    novo.inicial.depositosFGTS = novo.inicial.depositosFGTS.filter(d => d.desde !== b.dataset.dep);
-    await gravar(novo);
-    toast('Depósito apagado do histórico.');
+    await gravarDep((cfg.inicial.depositosFGTS ?? []).filter(d => d.desde !== b.dataset.dep));
+    toast('Valor apagado.');
   };
-  historico();
+  listaDep();
 
   $('#cfg-exp', el).onclick = async () => {
     const b = await exportarTudo();
