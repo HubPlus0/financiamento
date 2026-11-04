@@ -1,4 +1,4 @@
-const VERSAO = 'v15';
+const VERSAO = 'v16';
 const ARQUIVOS = [
   './',
   'index.html',
@@ -26,7 +26,8 @@ const ARQUIVOS = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(VERSAO).then(c => c.addAll(ARQUIVOS)).then(() => self.skipWaiting()));
+  // cache: 'reload' pula o cache HTTP (o GitHub Pages manda max-age=600): sem isso a versão nova pode guardar arquivo velho
+  e.waitUntil(caches.open(VERSAO).then(c => c.addAll(ARQUIVOS.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
