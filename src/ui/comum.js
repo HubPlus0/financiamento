@@ -62,7 +62,7 @@ const ICONES = {
   comparar: '<path d="M5 20V10M12 20V4M19 20v-7"/>',
   config: '<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>',
   f1: '<path d="M5 17 17 5M8 5h9v9"/>', f2: '<path d="M5 7l12 12M17 9v10H7" transform="translate(0 -3)"/>',
-  f3: '<path d="M6 5l6 6 6-6M6 12l6 6 6-6"/>', f4: '<path d="M4.5 12.5 9.5 17.5 19.5 7"/>',
+  f3: '<path d="M4.5 12.5 9.5 17.5 19.5 7"/>',
   left: '<path d="M15 5l-7 7 7 7"/>', right: '<path d="M9 5l7 7-7 7"/>', chev: '<path d="M6 9l6 6 6-6"/>',
   lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
   amort: '<path d="M12 4v10M7.5 10 12 14.5 16.5 10M5 19h14"/>',
@@ -74,9 +74,8 @@ const ICONES = {
 export const ic = (n, s = 18) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONES[n]}</svg>`;
 export const FX = {
   1: ['Faixa 1', 'Saldo sobe', 'A amortização é menor que a TR: o saldo sobe mesmo pagando a parcela'],
-  2: ['Faixa 2', 'Saldo cai, juros pesam', 'A amortização passou a TR, mas ainda é menor que os juros'],
-  3: ['Faixa 3', 'Passou os juros', 'A amortização já passa os juros, mas não juros + TR'],
-  4: ['Faixa 4', 'Passou juros + TR', 'A amortização passa juros e TR somados'],
+  2: ['Faixa 2', 'Saldo cai, juros pesam', 'A amortização passou a TR, mas ainda é menor que os juros + TR'],
+  3: ['Faixa 3', 'Passou os juros', 'A amortização passa os juros (somados à TR)'],
 };
 export const fbadge = f => `<span class="fb f${f}" title="${FX[f][0]}: ${FX[f][1]}">${ic('f' + f, 18)}</span>`;
 

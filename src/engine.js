@@ -48,17 +48,11 @@ export function prazoAposAmortizacao(saldo, pmtAtual, i) {
 export const valorDeCorte = (saldo, pmtAtual, nAlvo, i) => saldo - pv(pmtAtual, nAlvo, i);
 
 /**
- * Faixa do mês (§6.7.1). trValor = saldoAnt × tr, em reais.
- * 1: A < TR$; 2: TR$ ≤ A < J; 3: J ≤ A < J+TR$; 4: A ≥ J+TR$.
- * Se TR$ > J, as faixas 2 e 3 trocam de ordem ao longo do eixo de A.
+ * Faixa do mês. trValor = saldoAnt × tr, em reais.
+ * 1: A < TR$ (saldo sobe); 2: TR$ ≤ A < J+TR$; 3: A ≥ J+TR$.
+ * As antigas faixas 3 (J ≤ A < J+TR$) e 4 viraram a 3: com a TR baixa, a diferença era de poucos meses.
  */
-export function faixa({ amortizacao: a, juros: j, trValor: t }) {
-  const [lo, hi] = t <= j ? [t, j] : [j, t];
-  if (a < lo) return 1;
-  if (a >= j + t) return 4;
-  const meio = a < hi ? 0 : 1; // 0: entre os dois limiares, 1: acima do maior
-  return t <= j ? 2 + meio : 3 - meio;
-}
+export const faixa = ({ amortizacao: a, juros: j, trValor: t }) => (a < t ? 1 : a < j + t ? 2 : 3);
 
 /** Seguros do mês: MIP sobre o saldo, DFI sobre o valor de avaliação corrigido pela TR acumulada. */
 export function seguros(saldo, valorImovelCorrigido, premissas) {
@@ -110,10 +104,10 @@ export function replayHistorico(config, parcelasReais, amortizacoesReais, premis
     const saldoCalc = saldoAposExtra(saldo, e.valor, trP, du);
     saldo = e.saldoApos ?? saldoCalc; // saldo informado pela Caixa vence o calculado
     const calc = prazoAposAmortizacao(saldo, pmt, i);
-    const r = { data: e.data, saldoAntes, saldoDepois: saldo, diasUteis: du, trProximo: trP,
+    const r = { data: e.data, valor: e.valor, origem: e.origem, prazoAntes: prazo, saldoAntes, saldoDepois: saldo, diasUteis: du, trProximo: trP,
       calc: { saldoDepois: saldoCalc, prazoNovo: calc.nNovo, ajNovo: calc.pmtNovo, nExato: prazoExato(saldo, pmt, i) } };
     pmt = e.ajNovo ?? calc.pmtNovo;
-    prazo = e.prazoNovo ?? calc.nNovo;
+    prazo = r.prazoDepois = e.prazoNovo ?? calc.nNovo;
     if (e.ajNovo != null) r.calc.ajNovoComPrazoReal = price(saldo, e.prazoNovo, i);
     return r;
   });

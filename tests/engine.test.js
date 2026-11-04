@@ -34,10 +34,10 @@ const perto = (a, b, tol, msg) => assert(Math.abs(a - b) <= tol, `${msg}: ${a} v
   assert.strictEqual(E.prazoAposAmortizacao(S - v + 5, pmt, i).nNovo, n - 7); // sobra de 5 não vira outro mês
   perto(E.price(S - v, n - 7, i), pmt, 1e-6, 'corte mantém a parcela');
 
-  // faixas (TR$ < J) e troca de ordem (TR$ > J)
+  // faixas: limiares TR$ e J + TR$ (TR$ < J e TR$ > J)
   const f = (a, j, t) => E.faixa({ amortizacao: a, juros: j, trValor: t });
-  assert.deepStrictEqual([f(50, 1000, 300), f(300, 1000, 300), f(999, 1000, 300), f(1000, 1000, 300), f(1299, 1000, 300), f(1300, 1000, 300)], [1, 2, 2, 3, 3, 4]);
-  assert.deepStrictEqual([f(100, 200, 500), f(200, 200, 500), f(499, 200, 500), f(500, 200, 500), f(700, 200, 500)], [1, 3, 3, 2, 4]);
+  assert.deepStrictEqual([f(50, 1000, 300), f(300, 1000, 300), f(1000, 1000, 300), f(1299, 1000, 300), f(1300, 1000, 300)], [1, 2, 2, 2, 3]);
+  assert.deepStrictEqual([f(200, 200, 500), f(499, 200, 500), f(500, 200, 500), f(700, 200, 500)], [1, 1, 2, 3]);
 
   // dias úteis após o vencimento (vencimento em fim de semana vale a segunda)
   assert.strictEqual(E.diasUteisApos('2030-01-04', '2030-01-04'), 0); // sex, no dia

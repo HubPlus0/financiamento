@@ -85,6 +85,20 @@ const json = x => JSON.parse(JSON.stringify(x));
   assert(st.marcos.real.length >= 1 && st.marcos.plano.length >= st.marcos.real.length);
   assert(st.serieSaldo.reais.length === 8 && st.serieSaldo.plano.length > 0 && st.serieSaldo.referencia.length > 0);
   assert(st.quitacao.competencia < st.quitacaoReferencia.competencia, 'plano com extras quita antes');
+  // extras feitas x contrato sem nenhuma extra: sem extra (TR constante, Price) quita no prazo original (1ª parcela 2029-07 + 119)
+  const X = st.extras;
+  assert.deepStrictEqual(X.lista.map(e => [e.valor, e.origem]), [[5000, 'bolso'], [2000, 'fgts']]);
+  assert(X.lista.every(e => e.mesesReduzidos > 0));
+  assert.strictEqual(X.total, 7000); assert.strictEqual(X.fgts, 2000); assert.strictEqual(X.bolso, 5000);
+  assert.strictEqual(X.quitacaoSemExtras.competencia, '2039-06');
+  assert.strictEqual(X.quitacaoComExtras.competencia, st.quitacaoReferencia.competencia);
+  assert.strictEqual(X.mesesAMenos, soma(X.lista, e => e.mesesReduzidos), 'meses a menos = soma das reduções');
+  assert(X.economizado.juros > 0 && X.economizado.tr > 0 && X.economizado.porReal > 0.5);
+  const se = st.serieSaldo.semExtras;
+  perto(se[1].saldo, st.serieSaldo.reais[1].saldo, 1e-9, 'antes da 1ª extra, igual ao real');
+  assert(se[2].saldo > st.serieSaldo.reais[2].saldo + 4900, 'depois da extra, acima do real');
+  assert.strictEqual(se.at(-1).competencia, '2039-06'); perto(se.at(-1).saldo, 0, 0.01, 'quita');
+  assert.strictEqual(PN.painelStatus({ ...raw, extras: [] }).extras, null);
   // divergência: formato do item 4, contra a versão anterior e contra a primeira
   for (const contra of ['anterior', 'primeira']) {
     const dv = PN.painelStatus(raw, { contra }).divergencia;

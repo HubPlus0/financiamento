@@ -37,15 +37,37 @@ function listaMeses(p) {
   return { list: list || '<li class="sub" style="padding:12px 0">Nada para mostrar.</li>', mais: maxN > st.n ? Math.min(8, maxN - st.n) : 0 };
 }
 
+// Linhas: real + plano ativo; com as extras já feitas (só se o plano quita em outra data); contrato sem nenhuma extra.
+const mostraRef = (p, d) => d.plano.regra !== 'referencia' && p.quitacaoPlano?.competencia !== p.quitacaoReferencia?.competencia;
 function graficoSaldo(p, d) {
-  const ini = p.ultimaParcela.competencia, pt = l => [[xDe(ini), p.saldoAtual], ...l.map(m => [xDe(m.competencia), m.saldo])];
-  const ref = pt(p.serieSaldo.referencia), pl = pt(p.serieSaldo.plano);
-  const x0 = Math.floor(ref[0][0]), x1 = Math.ceil(Math.max(ref.at(-1)[0], pl.at(-1)[0]));
-  const dots = p.serieSaldo.marcos.plano.filter(m => m.faixa >= 2 && m.saldo != null).map(m => ({ x: xDe(m.competencia), y: m.saldo, color: `var(--f${m.faixa})` }));
-  const ymax = Math.max(...ref.map(q => q[1]), ...pl.map(q => q[1]));
-  return lineChart('st', { series: [{ pts: ref, color: 'var(--ink3)', dash: 1, w: 2 }, { pts: pl, color: 'var(--s1)' }], x0, x1, ymax, xt: marcasAno(x0, x1), dots,
-    aria: 'Saldo devedor, plano ativo e contrato sem amortização extra',
-    tip: x => `<b>${rotX(x)}</b><span>Plano <b>${R(interp(pl, x), 0)}</b></span><span>Sem extra <b>${R(interp(ref, x), 0)}</b></span>` });
+  const S = p.serieSaldo, ini = p.ultimaParcela.competencia, xh = xDe(ini), pts = l => l.map(m => [xDe(m.competencia), m.saldo]);
+  const real = pts(S.reais), pl = [...real, ...pts(S.plano)], ref = [[xh, p.saldoAtual], ...pts(S.referencia)], sem = S.semExtras ? pts(S.semExtras) : null;
+  const comRef = mostraRef(p, d);
+  const todas = [pl, ...(comRef ? [ref] : []), ...(sem ? [sem] : [])];
+  const x0 = Math.floor(pl[0][0]), x1 = Math.ceil(Math.max(...todas.map(l => l.at(-1)[0])));
+  const dots = S.marcos.plano.filter(m => m.faixa >= 2 && m.saldo != null).map(m => ({ x: xDe(m.competencia), y: m.saldo, color: `var(--f${m.faixa})` }));
+  const ymax = Math.max(...todas.flatMap(l => l.map(q => q[1])));
+  const linha = (rot, l, x) => `<span>${rot} <b>${R(interp(l, x), 0)}</b></span>`;
+  return lineChart('st', { series: [...(sem ? [{ pts: sem, color: 'var(--ink3)', dash: 1, w: 2 }] : []), ...(comRef ? [{ pts: ref, color: 'var(--s3)', dash: 1, w: 2 }] : []), { pts: pl, color: 'var(--s1)' }],
+    x0, x1, ymax, xt: marcasAno(x0, x1), dots, aria: 'Saldo devedor: real e plano ativo, com as extras já feitas e contrato sem nenhuma amortização extra',
+    tip: x => `<b>${rotX(x)}</b>${x <= xh ? linha('Real', real, x) : linha(comRef ? 'Plano' : 'Atual', pl, x) + (comRef ? linha('Extras feitas', ref, x) : '')}${sem ? linha('Sem nenhuma extra', sem, x) : ''}` });
+}
+
+function extrasHTML(p, d) {
+  const X = p.extras;
+  if (!X) return `<article class="card"><div class="kicker">Amortizações extras</div><div class="sub">Nenhuma amortização extra lançada ainda. Quando houver, aparece aqui quanto ela encurtou o contrato e quanto economizou.</div></article>`;
+  const E = X.economizado, q = (r, m) => `<dt>${r}</dt><dd>${m?.rotulo ?? '—'}</dd>`;
+  return `<article class="card">
+    <div class="kicker">Amortizações extras</div>
+    <div class="mid">${R(X.total)}</div>
+    <div class="sub">${X.lista.length} ${X.lista.length === 1 ? 'amortização' : 'amortizações'} · bolso ${R(X.bolso, 0)} · FGTS ${R(X.fgts, 0)}</div>
+    <div class="grid2"><div class="kv"><small>Contrato encurtou</small><b>${X.mesesAMenos} meses</b><small>${anosEMeses(X.mesesAMenos)}</small></div>
+    <div class="kv"><small>Juros + TR economizados</small><b>${R(E.total, 0)}</b><small>${R(E.porReal)} por real amortizado</small></div></div>
+    <dl class="dl" style="margin:0">${q('Quitação sem nenhuma extra', X.quitacaoSemExtras)}${q('Com as extras feitas', X.quitacaoComExtras)}${d.plano.regra !== 'referencia' ? q(`Plano ativo (${esc(d.plano.nome)})`, p.quitacaoPlano) : ''}
+      <dt>Juros economizados</dt><dd>${R(E.juros, 0)}</dd><dt>TR economizada</dt><dd>${R(E.tr, 0)}</dd></dl>
+    <div>${X.lista.map(e => `<div class="row" style="min-height:40px;border-bottom:1px solid var(--line)"><span>${dataBR(e.data)} <span class="ev ${e.origem === 'fgts' ? 'fgts' : 'am'}">${e.origem === 'fgts' ? 'FGTS' : 'Bolso'}</span></span><span><b>${R(e.valor)}</b> <small class="muted">−${e.mesesReduzidos} ${e.mesesReduzidos === 1 ? 'mês' : 'meses'}</small></span></div>`).join('')}</div>
+    <div class="sub">Comparado com o contrato sem nenhuma amortização extra: a TR real até hoje e a das premissas daqui em diante.</div>
+  </article>`;
 }
 
 function divergenciaHTML(p) {
@@ -72,7 +94,7 @@ export function statusView(d, p) {
   const em = dias === 0 ? 'é hoje' : dias > 0 ? `em ${dias} ${dias === 1 ? 'dia' : 'dias'}` : `atrasada há ${-dias} ${dias === -1 ? 'dia' : 'dias'}`;
   const T = p.totalPago, G = T.total, itens = p.composicao.map(c => ({ ...c, c: COR[c.chave] }));
   const { list, mais } = listaMeses(p);
-  const fx = [2, 3, 4].map(n => p.marcos.plano.find(x => x.faixa === n)).filter(Boolean);
+  const fx = [2, 3].map(n => p.marcos.plano.find(x => x.faixa === n)).filter(Boolean);
   const atual = f, qRef = p.quitacaoReferencia?.rotulo, qPl = p.quitacaoPlano?.rotulo;
   return `
   <article class="card">
@@ -109,15 +131,16 @@ export function statusView(d, p) {
     <div class="kv"><small style="display:flex;align-items:center;gap:6px"><i class="dot" style="background:var(--s7)"></i>Do FGTS</small><b>${R(p.gastoPorOrigem.fgts)}</b><small>entrada ${R(p.detalheOrigem.fgts.entrada, 0)} + amortizações ${R(p.detalheOrigem.fgts.extras, 0)}</small></div></div>
   </article>
   ${divergenciaHTML(p)}
+  ${extrasHTML(p, d)}
   <article class="card">
-    <div><div class="kicker">Evolução do saldo</div><div class="sub">Plano ativo × contrato sem amortização extra, com os marcos de faixa</div></div>
+    <div><div class="kicker">Evolução do saldo</div><div class="sub">Desde a 1ª parcela: o real e o plano ativo contra o contrato sem nenhuma amortização extra, com os marcos de faixa</div></div>
     ${graficoSaldo(p, d)}
-    <div class="legend"><span><i class="dot" style="background:var(--s1)"></i>Plano ativo (${esc(d.plano.nome)})</span><span><i class="dot" style="background:var(--ink3)"></i>Sem amortização extra</span></div>
+    <div class="legend"><span><i class="dot" style="background:var(--s1)"></i>${d.plano.regra !== 'referencia' ? `Real + plano ativo (${esc(d.plano.nome)}) · quita ${qPl ?? '—'}` : `Real · quita ${qRef ?? '—'}`}</span>${mostraRef(p, d) ? `<span><i class="dot" style="background:var(--s3)"></i>Só as extras já feitas · quita ${qRef ?? '—'}</span>` : ''}${p.extras ? `<span><i class="dot" style="background:var(--ink3)"></i>Sem nenhuma extra · quita ${p.extras.quitacaoSemExtras?.rotulo ?? '—'}</span>` : ''}</div>
     <div class="legend">${fx.filter(m => p.serieSaldo.marcos.plano.some(x => x.faixa === m.faixa)).map(m => `<span><i class="dot" style="background:var(--f${m.faixa});border-radius:50%"></i>${FX[m.faixa][0]} em ${m.rotulo}</span>`).join('')}</div>
   </article>
   <article class="card">
-    <div><div class="kicker">As quatro faixas</div><div class="sub">Comparam a amortização da parcela (A) com a TR e os juros (J)</div></div>
-    <div>${[1, 2, 3, 4].map(n => {
+    <div><div class="kicker">As três faixas</div><div class="sub">Comparam a amortização da parcela (A) com a TR e os juros (J)</div></div>
+    <div>${[1, 2, 3].map(n => {
       const pl = p.marcos.plano.find(x => x.faixa === n), rf = p.marcos.referencia.find(x => x.faixa === n), real = p.marcos.real.find(x => x.faixa === n);
       const txt = real ? `Desde ${real.rotulo}${n === atual ? ', ainda em vigor' : ''}` : `Plano <b style="color:var(--ink)">${pl?.rotulo ?? '—'}</b> · sem extra ${rf?.rotulo ?? '—'}`;
       return `<div class="fx">${fbadge(n)}<div style="flex:1;min-width:0"><b>${FX[n][0]} · ${FX[n][1]}</b><div class="sub">${FX[n][2]}</div><div class="sub" style="margin-top:3px">${txt}</div></div></div>`;

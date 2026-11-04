@@ -17,7 +17,7 @@
 //   econJ, econT, anosMenos -> economizado.{juros, tr, anos}; infl -> fator; best/tie -> melhor (null em "hoje"); marcos de faixa -> marcos[].mesesAntecipados
 //  Gráficos (seriesGraficos): donut -> rosca; D.yearly[k].S -> saldoPorAno; .A/.J/.TR/.seg -> composicaoParcela; .cart + D.cross -> saldoXCarteira (cruzamento)
 // Sem dado no Artifact: nada faltou; o texto "sem amortização extra seria em fev/2029" sai de marcos.referencia.
-import { somaMeses } from './engine.js';
+import { somaMeses, passoMes, taxaMensal } from './engine.js';
 import { dataMes } from './invest.js';
 import { estadoReal, projetar, projetarGrupo, resumo, mesesReais, divergencia, divergenciaAcumulada, janelaFGTS } from './scenario.js';
 import { gastos, economizado, linhaDoReal, vendaLiquida, patrimonio, deflator } from './patrimonio.js';
@@ -101,6 +101,46 @@ function totaisReais(P) {
   return { g, composicao };
 }
 
+const jurosETR = ms => ({ juros: soma(ms, m => m.juros), tr: soma(ms, m => m.saldoCorrigido - m.saldoInicial) });
+
+/**
+ * Contrato sem nenhuma amortização extra: do 1º mês com extra em diante, refaz os meses reais com a TR real e sem
+ * extras e depois projeta sem extras (premissas da referência). null se nunca houve extra.
+ * → { serie [{competencia, saldo}] desde o 1º mês real, quitacao, juros, tr (somados do 1º mês com extra até quitar), k0 }
+ */
+function semExtras(P) {
+  const { estado } = P, lr = estado.linhaReal, ms = lr.meses;
+  let k0 = ms.findIndex(m => m.extras.length);
+  if (k0 < 0) { if (!lr.extrasFinais.length) return null; k0 = ms.length; }
+  const p0 = [...P.parcelas].sort((a, b) => (a.vencimento < b.vencimento ? -1 : 1))[k0 - 1];
+  let saldo = ms[k0 - 1].saldo, pmt = p0.aj ?? p0.amortizacao + p0.juros;
+  const serie = ms.slice(0, k0).map(m => ({ competencia: m.competencia, saldo: m.saldo })), passado = [];
+  for (const m of ms.slice(k0)) {
+    const p = passoMes({ saldo, pmt }, { tr: m.calc.trMes, i: taxaMensal(estado.contrato) });
+    passado.push({ saldoInicial: saldo, saldoCorrigido: p.saldoCorrigido, juros: p.juros });
+    saldo = p.saldoFinal; pmt = p.pmt;
+    serie.push({ competencia: m.competencia, saldo });
+  }
+  const prazo = ms[k0 - 1].prazoRestante - (ms.length - k0);
+  const futuro = ativos(projetar({ ...estado, saldo, pmt, prazo }, { regra: 'referencia' }, null, P.pp[P.ref.premissasId]));
+  futuro.forEach(m => serie.push({ competencia: m.competencia, saldo: m.saldoFinal }));
+  return { serie, quitacao: resumo(futuro).quitacao, k0, ...jurosETR([...passado, ...futuro]) };
+}
+
+/** Amortizações extras feitas e o impacto contra o contrato sem nenhuma extra. null se nunca houve extra. */
+function impactoExtras(P, sem) {
+  if (!sem) return null;
+  const lr = P.estado.linhaReal, rf = ativos(P.proj[P.ref.id]);
+  const lista = [...lr.meses.flatMap(m => m.extras), ...lr.extrasFinais]
+    .map(e => ({ data: e.data, valor: e.valor, origem: e.origem ?? 'bolso', mesesReduzidos: e.prazoAntes - e.prazoDepois }));
+  const reaisDesde = lr.meses.slice(sem.k0).map(m => ({ saldoInicial: m.saldoAnt, saldoCorrigido: m.calc.saldoCorrigido, juros: m.calc.juros }));
+  const com = jurosETR([...reaisDesde, ...rf]), qCom = resumo(rf).quitacao, total = soma(lista, e => e.valor);
+  const juros = sem.juros - com.juros, tr = sem.tr - com.tr;
+  return { lista, total, fgts: soma(lista.filter(e => e.origem === 'fgts'), e => e.valor), bolso: soma(lista.filter(e => e.origem !== 'fgts'), e => e.valor),
+    quitacaoSemExtras: marca(sem.quitacao), quitacaoComExtras: marca(qCom), mesesAMenos: mesesEntre(qCom, sem.quitacao),
+    economizado: { juros, tr, total: juros + tr, porReal: total > 0 ? (juros + tr) / total : 0 } };
+}
+
 export function painelStatus(dados, { contra = 'anterior' } = {}) {
   const P = preparar(dados);
   if (!P) return null;
@@ -115,6 +155,7 @@ export function painelStatus(dados, { contra = 'anterior' } = {}) {
   const passaTR = l => marca([...reais, ...l].find(m => m.amortizacao >= m.tr)?.competencia);
   const pt = l => l.map(m => ({ competencia: m.competencia, saldo: m.saldo }));
   const extraFGTS = soma(P.real, m => m.amortFGTS), extraBolso = soma(P.real, m => m.amortBolso);
+  const sem = semExtras(P);
   return {
     saldoAtual: estado.saldo, ultimaParcela: { ...marca(ms.at(-1).competencia), vencimento: ms.at(-1).vencimento },
     prazoRestante: estado.prazo, quitacao: marca(resumo(pl).quitacao), quitacaoPlano: marca(resumo(pl).quitacao), quitacaoReferencia: marca(resumo(rf).quitacao),
@@ -130,7 +171,8 @@ export function painelStatus(dados, { contra = 'anterior' } = {}) {
     marcos: { ...marcos, passaTR: { plano: passaTR(lPlano), referencia: passaTR(lRef) } },
     divergencia: divergencias(P, contra),
     serie: [...reais, ...lPlano].map(m => ({ ...m, eventos: [...m.eventos, ...marcos.plano.filter(x => x.competencia === m.competencia).map(x => ({ tipo: 'marco-faixa', faixa: x.faixa }))] })),
-    serieSaldo: { reais: pt(reais), plano: pt(lPlano), referencia: pt(lRef),
+    extras: impactoExtras(P, sem),
+    serieSaldo: { reais: pt(reais), plano: pt(lPlano), referencia: pt(lRef), semExtras: sem?.serie ?? null,
       marcos: { real: marcos.real, plano: marcos.plano.filter(x => x.competencia >= estado.competencia), referencia: marcos.referencia.filter(x => x.competencia >= estado.competencia) } },
     janelaFGTS: janelaFGTS(pl),
   };
@@ -178,7 +220,7 @@ export function painelComparativo(dados, horizonte = 10, deflacionar = false) {
       saldoDevedor: d(divida), carteira: d(carteira), quitacao: marca(resumo(ms).quitacao),
       custoBolso: d(custoBolso), fgtsUsado: d(fgtsUsado), jurosPagos: d(gt.juros), trPaga: d(gt.trPaga),
       economizado: ehRef ? null : { juros: d(ec.juros), tr: d(ec.tr), anos: ec.anos, meses: ec.meses },
-      marcos: [2, 3, 4].map(fx => { const a = mc.find(x => x.faixa === fx)?.competencia ?? null, b = mRef.find(x => x.faixa === fx)?.competencia ?? null;
+      marcos: [2, 3].map(fx => { const a = mc.find(x => x.faixa === fx)?.competencia ?? null, b = mRef.find(x => x.faixa === fx)?.competencia ?? null;
         return { faixa: fx, ...marca(a), referencia: marca(b), mesesAntecipados: a && b ? mesesEntre(a, b) : null }; }) };
   });
   const melhor = comp == null ? null : cenarios.reduce((b, c) => (c.patrimonio > b.patrimonio ? c : b)).id;
