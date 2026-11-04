@@ -1,0 +1,7 @@
+seed/
+ref/
+.superpowers/
+*.backup.json
+node_modules/
+.claude/
+docs/
