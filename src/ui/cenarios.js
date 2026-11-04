@@ -106,7 +106,8 @@ export async function montarCenarios(el) {
       ${manual ? '' : `<div class="hint">Cenário de regra (${nomeRegra(cen.regra)}): o mês é derivado e fica só para leitura. Duplique para editar mês a mês.</div>`}
       <div class="field"><label for="e-amort">Amortizar com o bolso</label><div class="inp" id="w-amort"><span>R$</span><input id="e-amort" inputmode="decimal" value="${nBR(vi.amortBolso)}" ${manual ? '' : 'disabled'}></div><div class="hint err" id="e-errs" hidden></div></div>
       <div class="field"><label for="e-fgts">Amortizar com FGTS ${bloq ? `<span class="tag" style="margin-left:6px">${ic('lock', 12)} travado</span>` : ''}</label><div class="inp ${bloq ? 'lock' : ''}"><span>R$</span><input id="e-fgts" inputmode="decimal" value="${nBR(vi.amortFGTS)}" ${bloq || !manual ? 'disabled' : ''}></div>
-      <div class="hint">${!jan ? 'Sem saldo de FGTS informado neste cenário.' : bloq ? `O FGTS só pode amortizar a cada 24 meses.${jan.ultimoUso ? ` O último uso foi em <b>${rotuloMes(jan.ultimoUso)}</b>,` : ''} a próxima janela abre em <b>${jan.abreEm ? rotuloMes(jan.abreEm) : 'data fora do horizonte'}</b>${jan.saldoProjetado != null ? ` com saldo projetado de ${R(jan.saldoProjetado, 0)}` : ''}.` : `Janela aberta. Saldo projetado neste cenário: ${R(mes?.fgtsDisponivel, 0)}.`}${estado.fgts?.aviso ? ` ${esc(estado.fgts.aviso)}` : ''}</div></div>
+      <div class="hint">${!jan ? 'Sem saldo de FGTS informado neste cenário.' : bloq ? `O FGTS só pode amortizar a cada 24 meses.${jan.ultimoUso ? ` O último uso foi em <b>${rotuloMes(jan.ultimoUso)}</b>,` : ''} a próxima janela abre em <b>${jan.abreEm ? rotuloMes(jan.abreEm) : 'data fora do horizonte'}</b>${jan.saldoProjetado != null ? ` com saldo projetado de ${R(jan.saldoProjetado, 0)}` : ''}.` : `Janela aberta. Saldo projetado neste cenário: ${R(mes?.fgtsDisponivel, 0)}.${manual && mes?.fgtsDisponivel > 0 ? ` <button class="btn" style="min-height:36px;padding:0 12px;margin-top:6px" data-act="fgtstudo">Usar o saldo todo</button>` : ''}`}${estado.fgts?.aviso ? ` ${esc(estado.fgts.aviso)}` : ''}</div>
+      ${manual ? `<div class="toggle" style="margin-top:4px"><span>Repetir o FGTS a cada 24 meses<small class="sub" style="display:block">Depois do 1º uso que você confirmar, cada janela usa o saldo acumulado</small></span><button class="sw" role="switch" aria-checked="${!!cen.usarFGTS}" aria-label="Repetir o FGTS a cada 24 meses" data-act="fgtsrep"></button></div>` : ''}</div>
       <div class="field"><label for="e-resg">Resgatar da carteira para amortizar</label><div class="inp"><span>R$</span><input id="e-resg" inputmode="decimal" value="${nBR(vi.resgate)}" ${manual ? '' : 'disabled'}></div><div class="hint">Resgate sai do aporte mais antigo e não conta como custo novo.</div></div>
       <div class="cutbox"><div id="e-cut"></div>
         <div class="toggle" style="margin-top:4px"><span>Usar valor de corte</span><button class="sw" role="switch" aria-checked="${!!cen.usarValorDeCorte}" aria-label="Usar valor de corte" data-act="corte"></button></div></div>
@@ -172,6 +173,8 @@ export async function montarCenarios(el) {
       toast(`${alvo.nome} agora é o plano ativo.`);
     } else if (a === 'ndel') { await apagar('cenarios', alvo.id); selId = null; painel = null; toast(`"${alvo.nome}" excluído. As versões antigas continuam guardadas.`); }
     else if (a === 'corte') { await salvar('cenarios', { ...alvo, usarValorDeCorte: !alvo.usarValorDeCorte }); marcarPendentes([alvo.id]); }
+    else if (a === 'fgtsrep') { await salvar('cenarios', { ...alvo, usarFGTS: !alvo.usarFGTS }); marcarPendentes([alvo.id]); }
+    else if (a === 'fgtstudo') { $('#e-fgts', el).value = nBR(Math.floor(mes.fgtsDisponivel * 100) / 100); atualizar(); return; }
     else if (a === 'confirm' || a === 'repetir') {
       const v = vals(), fimRep = a === 'repetir' ? $('#e-rep', el).value : comp, comps = [];
       for (let c = comp; c <= fimRep; c = somaMes(c, 1)) comps.push(c);
@@ -192,7 +195,7 @@ export async function montarCenarios(el) {
 
 async function duplicar({ proj }, alvo, nome) {
   const { id: _, criadoEm, fixo, usarFGTS, ...resto } = alvo;
-  const novo = await salvar('cenarios', { ...resto, nome, regra: 'manual', planoAtivo: false, meses: dupMeses(proj, alvo) });
+  const novo = await salvar('cenarios', { ...resto, nome, regra: 'manual', planoAtivo: false, meses: dupMeses(proj, alvo), ...(alvo.regra === 'manual' && { usarFGTS: alvo.usarFGTS }) });
   await gerarVersoes('criacao', [novo.id]);
   return novo;
 }

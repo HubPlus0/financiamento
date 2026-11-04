@@ -51,6 +51,17 @@ const json = x => JSON.parse(JSON.stringify(x));
   const st = PN.painelStatus(raw);
   const estReal = S.estadoReal({ config, parcelas, extras, premissas: prem, fgtsReal });
   const real = estReal.linhaReal;
+  // FGTS: parte do saldo informado mais recente (saldo inicial da Config ou lançado), desconta usos e cresce mês a mês
+  // até o mês anterior à projeção (2030-03): rendimento de 3% a.a. e depósito, dezembro em dobro
+  const r = 1.03 ** (1 / 12);
+  const fgCfg = (data, dep) => S.estadoReal({ config: { ...config, inicial: { ...config.inicial, saldoFGTSAtual: 9000, dataSaldoFGTS: data, depositoMensalFGTS: dep } }, parcelas, extras, premissas: prem, fgtsReal }).fgts.saldo;
+  perto(estReal.fgts.saldo, 6000 * r * r, 1e-6, 'lançado 2029-12 menos o uso, + jan e fev');
+  perto(fgCfg('2030-01-15', 0), 9000 * r, 1e-6, 'saldo inicial de jan + fev');
+  perto(fgCfg('2030-01-15', 100), 9000 * r + 100, 1e-6, 'com depósito');
+  perto(fgCfg('2029-11-01', 100), (6000 * r + 100) * r + 100, 1e-6, 'lançado mais recente vence o saldo inicial');
+  const comHist = S.estadoReal({ config: { ...config, inicial: { ...config.inicial, saldoFGTSAtual: 9000, dataSaldoFGTS: '2029-12-20', depositoMensalFGTS: 300,
+    depositosFGTS: [{ desde: '2030-02', valor: 300 }, { desde: '2029-01', valor: 100 }] } }, parcelas, extras, premissas: prem, fgtsReal }).fgts;
+  perto(comHist.saldo, (9000 * r + 100) * r + 300, 1e-6, 'jan com o depósito antigo, fev com o novo');
   perto(st.saldoAtual, real.estado.saldo, 1e-9, 'saldo');
   assert.strictEqual(st.prazoRestante, real.estado.prazo);
   const T = st.totalPago;

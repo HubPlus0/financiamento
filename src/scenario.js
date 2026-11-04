@@ -6,6 +6,9 @@ import { patrimonioMes, deflator } from './patrimonio.js';
 const proxComp = c => somaMeses(c + '-01', 1).slice(0, 7);
 const soma = (l, f) => l.reduce((s, x) => s + f(x), 0);
 
+/** Depósito mensal do FGTS no mês: o último de `depositos` [{desde, valor}] com desde ≤ mês (antes do 1º, vale o 1º); sem lista, `deposito`. */
+export const depositoFGTS = (fg, comp) => (fg.depositos?.filter(d => d.desde <= comp).pop() ?? fg.depositos?.[0])?.valor ?? fg.deposito ?? 0;
+
 /**
  * Ponto de partida da projeção: o estado real depois da última parcela lançada e das extras posteriores a ela.
  * dados = { config, parcelas, extras, premissas, fgtsReal }. null se não há parcela lançada.
@@ -16,10 +19,21 @@ export function estadoReal({ config, parcelas, extras, premissas, fgtsReal = [] 
   const linhaReal = replayHistorico(config, parcelas, extras, premissas);
   const ult = linhaReal.meses[linhaReal.meses.length - 1];
   const { taxaNominalAA, valorAvaliacao, taxaOperacional } = config.contrato;
-  const sf = saldoFGTSReal(fgtsReal), pu = proximoUsoFGTS(fgtsReal);
-  const fgts = { saldo: sf ?? 0, livreEm: pu?.slice(0, 7) ?? null, deposito: config.inicial?.depositoMensalFGTS ?? 0,
+  // FGTS: parte do saldo informado mais recente (o saldo inicial da Config, preenchido uma vez, ou um lançado), desconta
+  // os usos depois dele e soma, de cada mês seguinte até o anterior à projeção, rendimento (sem TR) e depósito (dezembro em dobro)
+  const ini = config.inicial ?? {}, dep = ini.depositoMensalFGTS ?? 0, rend = (1 + (premissas.fgtsRendAA ?? 0.03)) ** (1 / 12);
+  const depositos = ini.depositosFGTS?.length ? [...ini.depositosFGTS].sort((a, b) => (a.desde < b.desde ? -1 : 1)) : undefined;
+  // saldoFGTSAtual / dataSaldoFGTS: nomes antigos do que a tela chama de saldo inicial
+  const movs = ini.saldoFGTSAtual != null && ini.dataSaldoFGTS ? [...fgtsReal, { data: ini.dataSaldoFGTS, tipo: 'saldo-informado', valor: ini.saldoFGTSAtual }] : fgtsReal;
+  const base = movs.filter(m => m.tipo === 'saldo-informado').map(m => m.data).sort().pop();
+  let sf = saldoFGTSReal(movs);
+  const comp0 = proxComp(ult.competencia);
+  // ponytail: usos descontados de uma vez, sem tirar o rendimento deles depois da data do uso (centavos)
+  if (sf != null) for (let c = proxComp(base.slice(0, 7)); c < comp0; c = proxComp(c)) sf = sf * rend + depositoFGTS({ deposito: dep, depositos }, c) * (c.endsWith('-12') ? 2 : 1);
+  const pu = proximoUsoFGTS(fgtsReal);
+  const fgts = { saldo: sf ?? 0, livreEm: pu?.slice(0, 7) ?? null, deposito: dep, depositos,
     aviso: sf == null ? 'Saldo do FGTS nunca informado: usando 0.' : null };
-  return { competencia: proxComp(ult.competencia), ...linhaReal.estado, fatorTR: ult.fatorTR, fgts,
+  return { competencia: comp0, ...linhaReal.estado, fatorTR: ult.fatorTR, fgts,
     contrato: { taxaNominalAA, valorAvaliacao, taxaOperacional },
     // o que patrimonio.js precisa do config (valorCompra, documentação, assinatura, vencimento, financiado)
     cfg: { contrato: { dataAssinatura: config.contrato.dataAssinatura, valorFinanciado: config.contrato.valorFinanciado, diaVencimento: config.contrato.diaVencimento },
@@ -71,6 +85,8 @@ export function projetar(estado, cenario, orcamento, premissas, { base, ate } = 
   const fg = estado.fgts ? { ...estado.fgts } : null;
   const rend = (1 + (premissas.fgtsRendAA ?? 0.03)) ** (1 / 12);
   const auto = !['manual', 'referencia', undefined].includes(cenario.regra);
+  // regra pronta: usarFGTS liga o FGTS em toda janela. Manual com usarFGTS: depois do 1º uso digitado, cada janela usa o saldo todo.
+  let fgtsAuto = auto && (cenario.usarFGTS ?? cenario.regra === 'amortizarTudo');
   const meses = []; let custo = 0;
   // carteira por lotes: só existe com orçamento (sem ele o aporte é null e carteiraBruta/Liquida ficam null)
   let lotes = orcamento || base ? [] : null;
@@ -83,7 +99,8 @@ export function projetar(estado, cenario, orcamento, premissas, { base, ate } = 
     if (lotes) { lotes = render(lotes, cdiDe(selic ?? 0, premissas.cdiSpread), premissas.pctCDI ?? 1); disp = liquidoCarteira(lotes, data, opc); }
     const ativo = prazo > 0 && saldo > 0;
     let fgDisp = 0;
-    if (fg) { fg.saldo = fg.saldo * rend * (1 + tr) + (fg.deposito ?? 0); fgDisp = comp >= (fg.livreEm ?? '') ? fg.saldo : 0; }
+    // 13º: dezembro deposita em dobro
+    if (fg) { fg.saldo = fg.saldo * rend * (1 + tr) + depositoFGTS(fg, comp) * (comp.endsWith('-12') ? 2 : 1); fgDisp = comp >= (fg.livreEm ?? '') ? fg.saldo : 0; }
     const ex = { amortBolso: 0, amortFGTS: 0, resgate: 0 };
     let p = { saldoCorrigido: 0, juros: 0 }, sg = { mip: 0, dfi: 0 }, amortizacao = 0, pmtMes = 0, saldoAposParcela = 0, taxa = 0;
     let resto = 0, proxPmt = pmt, corte = null, fx = null, encargo = 0; const eventos = [];
@@ -100,7 +117,9 @@ export function projetar(estado, cenario, orcamento, premissas, { base, ate } = 
       encargo = r2(pmtMes) + r2(sg.mip) + r2(sg.dfi) + taxa;
       const pl = planoDoMes(cenario, comp, extraDe(orcamento, comp));
       resto = saldoAposParcela; proxPmt = pmtMes;
-      ex.amortFGTS = Math.min(auto && (cenario.usarFGTS ?? cenario.regra === 'amortizarTudo') ? fgDisp : pl.amortFGTS ?? 0, resto); resto -= ex.amortFGTS;
+      const fgtsDigitado = pl.amortFGTS ?? 0;
+      ex.amortFGTS = Math.min(fgtsAuto && !(fgtsDigitado > 0) ? fgDisp : fgtsDigitado, resto); resto -= ex.amortFGTS;
+      if (!auto && cenario.usarFGTS && fgtsDigitado > 0) fgtsAuto = true;
       ex.resgate = Math.min(pl.resgate ?? 0, resto, disp ?? Infinity); resto -= ex.resgate;
       let b = Math.min(pl.amortBolso ?? 0, resto);
       if (b > 0 && resto - b > 0.005) {

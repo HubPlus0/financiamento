@@ -58,6 +58,25 @@ const perto = (a, b, tol, msg) => assert(Math.abs(a - b) <= tol, `${msg}: ${a} v
   assert.strictEqual(usos[0], '2030-03');
   if (usos[1]) assert.strictEqual(usos[1], '2032-03');
   perto(g.inv[0].fgtsSaldo, 10000 * (1.03 ** (1 / 12)) * 1.002 + 500, 1e-6, 'FGTS rende e recebe depósito');
+  const dez = g.inv.findIndex(m => m.competencia === '2030-12');
+  perto(g.inv[dez].fgtsSaldo, g.inv[dez - 1].fgtsSaldo * (1.03 ** (1 / 12)) * 1.002 + 1000, 1e-6, 'dezembro deposita em dobro (13º)');
+
+  // depósito com data: vale o último com desde ≤ mês; antes do 1º, o 1º
+  const depEst = { ...estado, fgts: { ...estado.fgts, deposito: 999, depositos: [{ desde: '2030-03', valor: 500 }, { desde: '2030-06', valor: 800 }] } };
+  assert.deepStrictEqual(['2030-01', '2030-05', '2030-06', '2031-01'].map(c => S.depositoFGTS(depEst.fgts, c)), [500, 500, 800, 800]);
+  assert.strictEqual(S.depositoFGTS({ deposito: 300 }, '2030-01'), 300);
+  const pd = S.projetar(depEst, grupo.inv, orcamentoCom(0), prem), k6 = pd.findIndex(m => m.competencia === '2030-06');
+  perto(pd[k6].fgtsSaldo, pd[k6 - 1].fgtsSaldo * (1.03 ** (1 / 12)) * 1.002 + 800, 1e-6, 'junho já com o depósito novo');
+  perto(pd[k6 - 1].fgtsSaldo, pd[k6 - 2].fgtsSaldo * (1.03 ** (1 / 12)) * 1.002 + 500, 1e-6, 'maio com o antigo');
+
+  // manual com usarFGTS: o 1º uso é digitado; depois, cada janela de 24 meses usa o saldo todo
+  const pri = { amortBolso: 0, amortFGTS: 3000, resgate: 0, confirmado: true };
+  const fgMan = usarFGTS => S.projetar(estado, { ...base, id: 'fm', regra: 'manual', usarFGTS, meses: { '2030-05': pri } }, null, prem).filter(m => m.amortFGTS > 0);
+  assert.deepStrictEqual(fgMan(false).map(m => m.competencia), ['2030-05']);
+  const rep = fgMan(true);
+  assert.deepStrictEqual(rep.slice(0, 3).map(m => m.competencia), ['2030-05', '2032-05', '2034-05']);
+  perto(rep[1].amortFGTS, rep[1].fgtsDisponivel, 1e-9, 'janela seguinte usa o saldo todo');
+  assert.deepStrictEqual(S.projetar(estado, { ...base, id: 'fm', regra: 'manual', usarFGTS: true, meses: {} }, null, prem).filter(m => m.amortFGTS > 0), [], 'sem 1º uso, nada');
 
   // janela do FGTS
   const j = S.janelaFGTS(g.inv);
