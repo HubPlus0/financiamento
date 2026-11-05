@@ -3,7 +3,11 @@ import { somaMeses } from './engine.js';
 
 const porData = l => [...l].sort((a, b) => (a.data < b.data ? -1 : 1));
 
-/** Último saldo informado (até `ate`) menos os usos posteriores a ele. null se nunca informado. */
+/**
+ * Último saldo informado (até `ate`) menos os usos posteriores a ele. null se nunca informado.
+ * Tipos de `fgtsReal`: 'saldo-informado', 'uso-entrada', 'uso-amortizacao', 'uso-prestacao' (parte de uma parcela paga
+ * com FGTS; leva também `competencia`). Todo 'uso-*' sai do saldo.
+ */
 export function saldoFGTSReal(fgtsReal, ate = '9999-12-31') {
   const l = porData(fgtsReal).filter(m => m.data <= ate);
   const s = l.filter(m => m.tipo === 'saldo-informado').pop();
@@ -11,13 +15,18 @@ export function saldoFGTSReal(fgtsReal, ate = '9999-12-31') {
   return l.filter(m => m.tipo.startsWith('uso') && m.data > s.data).reduce((v, m) => v - m.valor, s.valor);
 }
 
-/** Próxima data em que o FGTS pode amortizar: último uso-amortizacao + 24 meses (uso-entrada não conta). null = livre. */
-export function proximoUsoFGTS(fgtsReal) {
-  const u = porData(fgtsReal).filter(m => m.tipo === 'uso-amortizacao').pop();
+/**
+ * Próxima data em que o FGTS pode amortizar: último uso-amortizacao + 24 meses (uso-entrada não conta). null = livre.
+ * `janela` = premissa fgtsPrestacaoJanela: com 'reiniciaNoFim', o último débito de prestação com FGTS também conta
+ * (aproximação: a projeção refaz a conta no fim do período do cenário). 'naoAfeta' e 'bloqueiaDurante' ignoram as prestações.
+ */
+export function proximoUsoFGTS(fgtsReal, janela = 'naoAfeta') {
+  const tipos = janela === 'reiniciaNoFim' ? ['uso-amortizacao', 'uso-prestacao'] : ['uso-amortizacao'];
+  const u = porData(fgtsReal).filter(m => tipos.includes(m.tipo)).pop();
   return u ? somaMeses(u.data, 24) : null;
 }
 
-export const podeUsarFGTS = (fgtsReal, data) => (proximoUsoFGTS(fgtsReal) ?? '') <= data;
+export const podeUsarFGTS = (fgtsReal, data, janela) => (proximoUsoFGTS(fgtsReal, janela) ?? '') <= data;
 
 // ---- Fase 6: Selic, TR vinculada e carteira por lotes (puro)
 

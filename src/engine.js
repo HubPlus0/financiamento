@@ -133,7 +133,7 @@ export function replayHistorico(config, parcelasReais, amortizacoesReais, premis
     ultimaTr = tr;
     return { competencia: p.competencia, vencimento: p.vencimento, origemDados: real ? p.origemDados : 'reconstruido',
       saldoAnt, saldoCalc: passo.saldoFinal, saldo, prazoRestante: prazo,
-      encargo: r2(r2(pmt) + r2(sg.mip) + r2(sg.dfi) + c.taxaOperacional), fatorTR: fator, calc, extras };
+      encargo: r2(r2(pmt) + r2(sg.mip) + r2(sg.dfi) + c.taxaOperacional), fgtsPrestacao: p.fgtsPrestacao ?? 0, fatorTR: fator, calc, extras };
   });
 
   const ult = ps[ps.length - 1];
@@ -160,7 +160,9 @@ export function proximoVencimento(parcelasReais, config) {
 
 /**
  * Lança a parcela. linhaReal = resultado de replayHistorico (estado já com as extras do período).
- * entrada = { vencimento, pago, saldoApos, dataPagamento?, devido?, amortizacao?, juros?, correcao?, mip?, dfi?, taxa? }.
+ * entrada = { vencimento, pago, saldoApos, dataPagamento?, devido?, amortizacao?, juros?, correcao?, mip?, dfi?, taxa?, fgtsPrestacao? }.
+ * `pago` é a prestação inteira; `fgtsPrestacao` é a parte dela debitada do FGTS (o bolso pagou pago − fgtsPrestacao).
+ * Aviso se passar de `premissas.fgtsPrestacaoPct` (80%) do pago ou do próprio pago.
  * TR deduzida do saldo informado: saldoApos = (1+tr)·(S·(1+i·k) − P), k = 1 (ou dias/30 na 1ª parcela).
  * Opcional digitado que difere do calculado em > R$ 0,05 gera aviso e prevalece no registro.
  */
@@ -190,11 +192,14 @@ export function lancarParcela(linhaReal, entrada, config, premissas) {
   const juros = entrada.juros ?? r2(passo.juros), amortizacao = entrada.amortizacao ?? r2(passo.amortizacao);
   const aj = entrada.juros != null && entrada.amortizacao != null ? r2(juros + amortizacao) : r2(passo.pmt);
   const taxa = entrada.taxa ?? c.taxaOperacional;
+  const fp = entrada.fgtsPrestacao, pct = premissas.fgtsPrestacaoPct ?? 0.8;
+  if (fp > entrada.pago + 0.005) avisos.push('FGTS na prestação maior que o valor pago.');
+  else if (fp > r2(pct * entrada.pago) + 0.005) avisos.push(`FGTS na prestação acima de ${Math.round(pct * 100)}% do valor pago (a Caixa paga até ${Math.round(pct * 100)}%). Confira.`);
   const registro = { competencia: entrada.vencimento.slice(0, 7), vencimento: entrada.vencimento,
     dataPagamento: entrada.dataPagamento ?? null, numeroCaixa: linhaReal.meses.length + 1,
     pago: entrada.pago, devido: entrada.devido ?? entrada.pago, saldoApos: entrada.saldoApos, aj, amortizacao, juros,
     correcao: entrada.correcao ?? r2(S * tr), seguros: r2(entrada.pago - aj - taxa), mip: entrada.mip, dfi: entrada.dfi,
-    taxa, calc, origemDados: 'lancamento' };
+    taxa, fgtsPrestacao: fp > 0 ? fp : undefined, calc, origemDados: 'lancamento' };
   for (const k in registro) if (registro[k] === undefined) delete registro[k];
   return { registro, calc, avisos };
 }
