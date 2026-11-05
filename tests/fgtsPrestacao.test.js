@@ -20,66 +20,101 @@ const perto = (a, b, tol, msg) => assert(Math.abs(a - b) <= tol, `${msg}: ${a} v
   const periodo = (extra = {}) => ({ modo: 'periodo', inicio: '2030-01', ...extra });
   const man = (fgtsPrestacao, extra = {}) => ({ ...base, id: 'm', regra: 'manual', fgtsPrestacao, ...extra });
 
-  // ---- limite de 80%: padrão sobre o encargo total; premissa 'aj' usa só A+J
+  const orc = { id: 'o', meses: Object.fromEntries(Array.from({ length: 300 }, (_, k) => [E.somaMeses('2030-01-01', k).slice(0, 7), { extra: 1000, confirmado: true }])) };
+  const cent = x => Math.floor(x * 100 + 1e-6) / 100;
+
+  // ---- pedido: até 80% da prestação × 12, sai INTEIRO do FGTS no pedido e abate valor/12 por mês
   const ms = S.projetar(estado, man(periodo()), null, prem);
-  const m0 = ms[0];
-  perto(m0.fgtsPrestacao, E.r2(0.8 * m0.encargo), 1e-9, '80% do encargo');
+  const m0 = ms[0], teto0 = E.r2(E.r2(0.8 * m0.encargo) * 12), S1 = 20000 * f + 500;
+  perto(m0.fgtsPedidoTeto, teto0, 1e-9, 'teto do pedido = 80% do encargo × 12');
+  perto(m0.fgtsPedido, teto0, 1e-9, 'com saldo, pede o teto');
+  perto(m0.fgtsSaldo, S1 - m0.fgtsPedido, 1e-6, 'o pedido sai todo do FGTS no 1º mês');
+  perto(m0.fgtsPrestacao, m0.fgtsPedido / 12, 1e-9, 'abate 1/12 por mês');
+  perto(m0.fgtsCredito, m0.fgtsPedido * 11 / 12, 1e-6, 'o resto fica como crédito');
   assert.strictEqual(m0.fgtsPrestacaoMes, 1);
-  assert(m0.eventos.includes('fgts-prestacao'));
-  perto(m0.fgtsSaldo, 20000 * f + 500 - m0.fgtsPrestacao, 1e-6, 'FGTS cai pelo valor pago na prestação');
+  assert(m0.eventos.includes('fgts-pedido') && m0.eventos.includes('fgts-prestacao'));
+  assert(ms.slice(0, 12).every(m => Math.abs(m.fgtsPrestacao - m0.fgtsPedido / 12) < 1e-6), 'parcelas iguais');
+  perto(ms.slice(0, 12).reduce((s, m) => s + m.fgtsPrestacao, 0), m0.fgtsPedido, 1e-6, 'os 12 meses consomem o pedido');
+  assert.strictEqual(ms[11].fgtsCredito, 0);
+  assert(ms.slice(1, 12).every(m => m.fgtsPedido === 0));
+  // os depósitos que entram durante o período NÃO são usados: ficam no FGTS
+  perto(ms[1].fgtsSaldo, m0.fgtsSaldo * f + 500, 1e-6, 'depósito do 2º mês fica no FGTS');
+  // base A+J e percentual editáveis; valor escolhido abaixo do teto
   const aj = S.projetar(estado, man(periodo()), null, { ...prem, fgtsPrestacaoBase: 'aj' })[0];
-  perto(aj.fgtsPrestacao, E.r2(0.8 * E.r2(aj.pmt)), 1e-9, '80% de A+J');
-  assert(aj.fgtsPrestacao < m0.fgtsPrestacao);
-  perto(S.projetar(estado, man(periodo()), null, { ...prem, fgtsPrestacaoPct: 0.5 })[0].fgtsPrestacao, E.r2(0.5 * m0.encargo), 1e-9, 'percentual editável');
+  perto(aj.fgtsPedido, E.r2(E.r2(0.8 * E.r2(aj.pmt)) * 12), 1e-9, '80% de A+J × 12');
+  assert(aj.fgtsPedido < m0.fgtsPedido);
+  perto(S.projetar(estado, man(periodo()), null, { ...prem, fgtsPrestacaoPct: 0.5 })[0].fgtsPedido, E.r2(E.r2(0.5 * m0.encargo) * 12), 1e-9, 'percentual editável');
+  const v6 = S.projetar(estado, man(periodo({ valor: 6000 })), null, prem);
+  assert.strictEqual(v6[0].fgtsPedido, 6000);
+  perto(v6[0].fgtsPrestacao, 500, 1e-9, 'valor escolhido / 12');
   // FGTS na prestação não mexe no saldo devedor nem no prazo: é só quem paga
   const semFP = S.projetar(estado, man(undefined), null, prem);
   assert.deepStrictEqual(ms.map(m => [m.saldoFinal, m.prazoRestante, m.encargo]), semFP.map(m => [m.saldoFinal, m.prazoRestante, m.encargo]));
-  assert(semFP.every(m => m.fgtsPrestacao === 0 && m.fgtsPrestacaoMes === null));
+  assert(semFP.every(m => m.fgtsPrestacao === 0 && m.fgtsPrestacaoMes === null && m.fgtsPedido === 0));
+  // prazo restante menor que 12: o período é o prazo restante
+  const curto = { ...estado, saldo: 5000, pmt: E.price(5000, 5, i), prazo: 5 };
+  const mc = S.projetar(curto, man(periodo()), null, prem);
+  assert.strictEqual(mc.length, 5);
+  perto(mc[0].fgtsPedidoTeto, E.r2(E.r2(0.8 * mc[0].encargo) * 5), 1e-9, 'teto com 5 meses');
+  assert.deepStrictEqual(mc.map(m => m.fgtsPrestacaoMes), [1, 2, 3, 4, 5]);
+  perto(mc.reduce((s, m) => s + m.fgtsPrestacao, 0), mc[0].fgtsPedido, 1e-6, 'consome tudo até quitar');
 
-  // ---- 12 meses seguidos; sem renovar, para; renovando, começa outro período logo depois
+  // ---- 12 meses; sem renovar, para; renovando, pede de novo no mês seguinte, com o que acumulou
   assert.deepStrictEqual(ms.slice(0, 14).map(m => m.fgtsPrestacaoMes), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, null, null]);
-  assert(ms.slice(12).every(m => m.fgtsPrestacao === 0));
+  assert(ms.slice(12).every(m => m.fgtsPrestacao === 0 && m.fgtsPedido === 0));
   const ren = S.projetar(estado, man(periodo({ renovar: true })), null, prem);
   assert.deepStrictEqual(ren.slice(10, 26).map(m => m.fgtsPrestacaoMes), [11, 12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2]);
-  assert(ren[12].fgtsPrestacao > 0, 'renovação: o 13º mês volta a usar o FGTS');
-  // período menor que 12 meses; começo no passado continua um período já em curso
-  assert.deepStrictEqual(S.projetar(estado, man(periodo({ meses: 3 })), null, prem).slice(0, 4).map(m => m.fgtsPrestacaoMes), [1, 2, 3, null]);
-  assert.deepStrictEqual(S.projetar(estado, man({ modo: 'periodo', inicio: '2029-08' }), null, prem).slice(0, 8).map(m => m.fgtsPrestacaoMes), [6, 7, 8, 9, 10, 11, 12, null]);
-  // passar de 12 meses sem renovar é recusado
-  assert.match(S.errosFGTSPrestacao(estado, periodo({ meses: 13 })).join(' '), /no máximo 12 meses/);
-  assert.deepStrictEqual(S.errosFGTSPrestacao(estado, periodo({ meses: 12 })), []);
-  assert.deepStrictEqual(S.errosFGTSPrestacao(estado, periodo({ meses: 24, renovar: true })), []);
-  assert.throws(() => S.definirFGTSPrestacao(estado, man(undefined), periodo({ meses: 13 })), /no máximo 12 meses/);
+  assert(ren[12].fgtsPedido > 0, 'renovação: novo pedido no 13º mês');
+  // validação: sem FGTS informado, recusa; valor do pedido precisa ser positivo
+  assert.deepStrictEqual(S.errosFGTSPrestacao(estado, periodo({ renovar: true })), []);
+  assert.match(S.errosFGTSPrestacao(estado, periodo({ valor: 0 })).join(' '), /maior que zero/);
+  assert.match(S.errosFGTSPrestacao(estado, { modo: 'periodo' }).join(' '), /primeiro pedido/);
+  assert.throws(() => S.definirFGTSPrestacao(estado, man(undefined), periodo({ valor: -1 })), /maior que zero/);
   assert.deepStrictEqual(S.definirFGTSPrestacao(estado, man(undefined), periodo()).fgtsPrestacao, periodo());
   assert(!('fgtsPrestacao' in S.definirFGTSPrestacao(estado, man(periodo()), null)), 'null desliga');
-  const orc = { id: 'o', meses: Object.fromEntries(Array.from({ length: 300 }, (_, k) => [E.somaMeses('2030-01-01', k).slice(0, 7), { extra: 1000, confirmado: true }])) };
-  assert(!S.validarMes(estado, man(periodo({ meses: 13 })), orc, prem, '2030-02', {}).ok);
-  // sem FGTS informado: recusa; a projeção ignora a opção
+  assert(!S.validarMes(estado, man(periodo({ valor: 0 })), orc, prem, '2030-02', {}).ok);
   const semFGTS = est(undefined);
   assert.match(S.errosFGTSPrestacao(semFGTS, periodo()).join(' '), /Sem saldo de FGTS/);
   assert(!S.validarMes(semFGTS, man(periodo()), orc, prem, '2030-01', {}).ok);
   assert(S.projetar(semFGTS, man(periodo()), null, prem).every(m => m.fgtsPrestacao === 0));
 
-  // ---- saldo insuficiente: paga só o que tem, o resto sai do bolso, e a prévia/validação avisam
-  const pouco = est({ saldo: 100, livreEm: null, deposito: 0, aviso: null });
-  const mp = S.projetar(pouco, man(periodo()), null, prem);
-  perto(mp[0].fgtsPrestacao, 100 * f, 1e-9, 'paga o saldo todo');
-  perto(mp[0].fgtsSaldo, 0, 1e-9, 'FGTS zerado');
-  assert.strictEqual(mp[1].fgtsPrestacao, 0);
-  assert.strictEqual(mp[1].fgtsPrestacaoMes, 2, 'o período segue correndo mesmo sem saldo');
-  const v0 = S.validarMes(pouco, man(periodo()), orc, prem, '2030-01', {});
-  assert(v0.ok && /insuficiente/.test(v0.avisos.join(' ')), 'aviso de saldo insuficiente');
-  assert.match(S.validarMes(pouco, man(periodo()), orc, prem, '2030-02', {}).avisos.join(' '), /Sem saldo de FGTS neste mês/);
-  assert.match(S.previa(pouco, man(periodo()), orc, prem, '2030-01', {}, 1).avisos.join(' '), /insuficiente/);
+  // ---- saldo insuficiente: o pedido é só o saldo que já está lá; avisa
+  const pouco = est({ saldo: 600, livreEm: null, deposito: 0, aviso: null });
+  const mp = S.projetar(pouco, man(periodo({ renovar: true })), null, prem);
+  perto(mp[0].fgtsPedido, cent(600 * f), 1e-9, 'pede o saldo todo');
+  perto(mp[0].fgtsPrestacao, mp[0].fgtsPedido / 12, 1e-9, 'e abate 1/12 por mês');
+  assert(mp[0].fgtsSaldo < 0.01);
+  const v0 = S.validarMes(pouco, man(periodo({ renovar: true })), orc, prem, '2030-01', {});
+  assert(v0.ok && /cobre só/.test(v0.avisos.join(' ')), 'aviso de saldo insuficiente');
+  assert.deepStrictEqual(S.validarMes(pouco, man(periodo({ renovar: true })), orc, prem, '2030-02', {}).avisos, [], 'no meio do período, sem aviso');
+  assert.match(S.validarMes(pouco, man(periodo({ renovar: true })), orc, prem, '2031-01', {}).avisos.join(' '), /Sem saldo de FGTS para o pedido/);
+  assert.match(S.previa(pouco, man(periodo({ renovar: true })), orc, prem, '2030-01', {}, 1).avisos.join(' '), /cobre só/);
   assert.deepStrictEqual(S.validarMes(estado, man(periodo()), orc, prem, '2030-01', {}).avisos, [], 'com saldo, sem aviso');
+  assert(!S.validarMes(estado, man(periodo({ valor: 6000 })), orc, prem, '2030-01', {}).avisos.length, 'valor escolhido abaixo do saldo: sem aviso');
 
-  // ---- depósitos que entram durante o período são usados (dezembro em dobro)
+  // ---- é preciso ter o valor antes: com só o depósito mensal, o 1º pedido é pequeno e o seguinte junta 12 meses
   const soDep = est({ saldo: 0, livreEm: null, deposito: 300, aviso: null });
   const md = S.projetar(soDep, man(periodo({ renovar: true })), null, prem);
-  perto(md[0].fgtsPrestacao, 300, 1e-9, 'usa o depósito do mês');
-  perto(md[5].fgtsPrestacao, 300, 1e-9, 'todo mês');
-  perto(md.find(m => m.competencia === '2030-12').fgtsPrestacao, 600, 1e-9, '13º em dezembro');
-  assert(md.slice(0, 12).every(m => Math.abs(m.fgtsSaldo) < 1e-9));
+  perto(md[0].fgtsPedido, 300, 1e-9, '1º pedido: só o depósito do mês');
+  perto(md[0].fgtsPrestacao, 25, 1e-9, '300 / 12');
+  assert(md[12].fgtsPedido > 3500, `2º pedido junta os depósitos do período (${md[12].fgtsPedido})`);
+  perto(md[12].fgtsPrestacao, md[12].fgtsPedido / 12, 1e-9, '2º período');
+
+  // ---- pedido real em curso (estado.fgts.credito): abate primeiro, e o pedido do cenário só vem depois
+  const comCredito = est({ saldo: 20000, livreEm: null, deposito: 500, aviso: null, credito: { porMes: 400, meses: 3, restante: 1200 } });
+  const mr = S.projetar(comCredito, man(periodo({ renovar: true })), null, prem);
+  assert.deepStrictEqual(mr.slice(0, 5).map(m => [Math.round(m.fgtsPrestacao), m.fgtsPrestacaoMes, m.fgtsPedido > 0]), [[400, 1, false], [400, 2, false], [400, 3, false], [Math.round(mr[3].fgtsPedido / 12), 1, true], [Math.round(mr[3].fgtsPedido / 12), 2, false]]);
+  assert(S.projetar(comCredito, man(undefined), null, prem).slice(0, 4).map(m => m.fgtsPrestacao).join() === '400,400,400,0', 'o real abate mesmo sem a opção no cenário');
+  // dívida acaba no meio do período: o que sobrou do pedido volta ao FGTS
+  const big = { id: 'o', meses: Object.fromEntries(Object.keys(orc.meses).map(c => [c, { extra: 30000, confirmado: true }])) };
+  const qq = S.projetar(estado, { ...base, id: 'q', regra: 'amortizarTudo', usarFGTS: false, fgtsPrestacao: periodo() }, big, prem);
+  const ql = qq.filter(m => m.saldoInicial > 0).at(-1), qa = qq[qq.indexOf(ql) - 1];
+  assert(ql.fgtsPrestacaoMes < 12 && qa.fgtsCredito > 0, 'quita no meio do período');
+  assert.strictEqual(ql.fgtsCredito, 0);
+  perto(ql.fgtsSaldo, qa.fgtsSaldo * f + 500 * (ql.competencia.endsWith('-12') ? 2 : 1) + qa.fgtsCredito - ql.fgtsPrestacao, 1e-6, 'sobra volta ao FGTS');
+  // o crédito ainda não abatido entra no patrimônio
+  const premPat = { ...prem, valorizacaoImovelAA: 0.05, custoVendaPct: 0.06, irGanhoCapitalImovel: true };
+  perto(P.patrimonioMes(cfg, premPat, m0) - P.patrimonioMes(cfg, premPat, { ...m0, fgtsCredito: 0 }), m0.fgtsCredito, 1e-6, 'crédito no patrimônio');
 
   // ---- mesmo orçamento: o aporte sobe exatamente o que o FGTS pagou; custo do bolso igual; carteira maior
   const prem2 = { ...prem, selic: { atual: 0.12, longoPrazo: 0.1, anosAteLongoPrazo: 3 }, trMensal: { modo: 'vinculadaSelic', piso: 0.085, fator: 0.03 }, cdiSpread: -0.001, pctCDI: 1, isentoIR: false };
@@ -123,7 +158,8 @@ const perto = (a, b, tol, msg) => assert(Math.abs(a - b) <= tol, `${msg}: ${a} v
   perto(rs.usoFGTS, usoP, 1e-9, 'resumo.usoFGTS inclui as prestações');
   const ver = S.criarVersao({ cenario: grupo[2], motivo: 'criacao', estado, orcamento: orc, premissas: prem2, agora: 'x', meses: g.invfp });
   const casas = x => (String(x).split('.')[1] ?? '').length;
-  assert(ver.meses.filter(m => m.fgtsPrestacaoMes).every(m => casas(m.fgtsPrestacao) <= 2));
+  assert(ver.meses.filter(m => m.fgtsPrestacaoMes).every(m => casas(m.fgtsPrestacao) <= 2 && casas(m.fgtsCredito) <= 2));
+  assert(ver.meses[0].fgtsPedido > 0 && casas(ver.meses[0].fgtsPedido) <= 2 && !('fgtsPedido' in ver.meses[1]) && !('fgtsPedidoTeto' in ver.meses[0]));
   assert(casas(ver.resumo.usoFGTSPrestacao) <= 2);
   assert(ver.meses[0].fgtsPrestacao > 0 && !('fgtsPrestacao' in S.criarVersao({ cenario: grupo[1], motivo: 'criacao', estado, orcamento: orc, premissas: prem2, agora: 'x', meses: g.inv }).meses[0]), 'mês sem FGTS na prestação fica enxuto');
 
@@ -188,13 +224,22 @@ const perto = (a, b, tol, msg) => assert(Math.abs(a - b) <= tol, `${msg}: ${a} v
   assert.strictEqual(gr.fgtsPrestacao, 1000);
   perto(gr.porOrigem.fgts, 10000 + 1000, 1e-9, 'FGTS real = entrada + prestações');
   perto(gr.diferenca, 0, 0.05, 'conservação na linha real');
-  // saldo real do FGTS desconta o uso na prestação; a janela de 24 meses só conta as prestações com 'reiniciaNoFim'
-  const fr = [{ data: '2030-01-01', tipo: 'saldo-informado', valor: 5000 }, { data: '2030-02-10', tipo: 'uso-amortizacao', valor: 3000 },
-    { data: '2030-04-10', tipo: 'uso-prestacao', competencia: '2030-04', valor: 880 }];
-  assert.strictEqual(I.saldoFGTSReal(fr), 5000 - 3000 - 880);
+  // pedido real: o valor inteiro sai do FGTS na data do pedido; a janela de 24 meses só conta o pedido com 'reiniciaNoFim',
+  // a partir do fim do período
+  const fr = [{ data: '2030-01-01', tipo: 'saldo-informado', valor: 9000 }, { data: '2030-02-10', tipo: 'uso-amortizacao', valor: 3000 },
+    { data: '2030-02-15', tipo: 'uso-prestacao', valor: 6000, meses: 12 }];
+  assert.strictEqual(I.saldoFGTSReal(fr), 9000 - 3000 - 6000);
   assert.strictEqual(I.proximoUsoFGTS(fr), '2032-02-10');
-  assert.strictEqual(I.proximoUsoFGTS(fr, 'reiniciaNoFim'), '2032-04-10');
+  assert.strictEqual(I.proximoUsoFGTS(fr, 'reiniciaNoFim'), '2033-02-15');
   assert(I.podeUsarFGTS(fr, '2032-03-01') && !I.podeUsarFGTS(fr, '2032-03-01', 'reiniciaNoFim'));
+  // crédito em curso: o 1º vencimento depois do pedido já abate; parcela sem o valor informado conta valor/meses
+  assert.deepStrictEqual(I.creditoFGTSPrestacao(fr, parcelas), { porMes: 500, meses: 10, restante: 5000 });
+  assert.deepStrictEqual(I.creditoFGTSPrestacao(fr, parcelas.map(({ fgtsPrestacao, ...p }) => p)), { porMes: 500, meses: 10, restante: 5000 });
+  assert.strictEqual(I.creditoFGTSPrestacao(fr.slice(0, 2), parcelas), null);
+  const er = S.estadoReal({ config, parcelas, extras: [], premissas: { ...prem, ...pr }, fgtsReal: fr });
+  assert.deepStrictEqual(er.fgts.credito, { porMes: 500, meses: 10, restante: 5000 });
+  const pj = S.projetar(er, man(undefined), null, prem);
+  assert.deepStrictEqual(pj.slice(0, 11).map(m => Math.round(m.fgtsPrestacao)), [500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 0], 'a projeção continua o pedido real');
 
   // ---- backup ida e volta com tudo o que é novo
   const stores = {
@@ -202,7 +247,7 @@ const perto = (a, b, tol, msg) => assert(Math.abs(a - b) <= tol, `${msg}: ${a} v
     parcelasReais: [{ id: 'p1', criadoEm: 'x', competencia: '2030-04', aj: 1, pago: 1100, fgtsPrestacao: 880 }],
     amortizacoesReais: [], fgtsReal: fr.map((m, k) => ({ id: 'f' + k, criadoEm: 'x', ...m })),
     premissas: [{ id: 'padrao', criadoEm: 'x', ...S.PADRAO_FGTS_PRESTACAO, fgtsPrestacaoJanela: 'reiniciaNoFim' }], orcamentos: [],
-    cenarios: [{ id: 'c', criadoEm: 'x', regra: 'manual', meses: {}, fgtsPrestacao: { modo: 'periodo', inicio: '2030-04', meses: 12, renovar: true } }, { id: 'c2', regra: 'amortizarTudo', fgtsPrestacao: { modo: 'auto' } }],
+    cenarios: [{ id: 'c', criadoEm: 'x', regra: 'manual', meses: {}, fgtsPrestacao: { modo: 'periodo', inicio: '2030-04', renovar: true, valor: 5000 } }, { id: 'c2', regra: 'amortizarTudo', fgtsPrestacao: { modo: 'auto' } }],
     versoes: [],
   };
   const bk = JSON.parse(JSON.stringify(D.montarBackup(stores, '2030-01-01T00:00:00.000Z')));

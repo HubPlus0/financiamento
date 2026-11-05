@@ -5,8 +5,8 @@ const porData = l => [...l].sort((a, b) => (a.data < b.data ? -1 : 1));
 
 /**
  * Último saldo informado (até `ate`) menos os usos posteriores a ele. null se nunca informado.
- * Tipos de `fgtsReal`: 'saldo-informado', 'uso-entrada', 'uso-amortizacao', 'uso-prestacao' (parte de uma parcela paga
- * com FGTS; leva também `competencia`). Todo 'uso-*' sai do saldo.
+ * Tipos de `fgtsReal`: 'saldo-informado', 'uso-entrada', 'uso-amortizacao', 'uso-prestacao' (pedido de "Usar FGTS em
+ * 12 prestações": o valor inteiro sai do FGTS na data do pedido; leva `meses`, a duração do período). Todo 'uso-*' sai do saldo.
  */
 export function saldoFGTSReal(fgtsReal, ate = '9999-12-31') {
   const l = porData(fgtsReal).filter(m => m.data <= ate);
@@ -17,13 +17,27 @@ export function saldoFGTSReal(fgtsReal, ate = '9999-12-31') {
 
 /**
  * Próxima data em que o FGTS pode amortizar: último uso-amortizacao + 24 meses (uso-entrada não conta). null = livre.
- * `janela` = premissa fgtsPrestacaoJanela: com 'reiniciaNoFim', o último débito de prestação com FGTS também conta
- * (aproximação: a projeção refaz a conta no fim do período do cenário). 'naoAfeta' e 'bloqueiaDurante' ignoram as prestações.
+ * `janela` = premissa fgtsPrestacaoJanela: com 'reiniciaNoFim', o pedido de FGTS nas prestações também conta, a partir
+ * do fim do período (data do pedido + meses). 'naoAfeta' e 'bloqueiaDurante' ignoram as prestações.
  */
 export function proximoUsoFGTS(fgtsReal, janela = 'naoAfeta') {
-  const tipos = janela === 'reiniciaNoFim' ? ['uso-amortizacao', 'uso-prestacao'] : ['uso-amortizacao'];
-  const u = porData(fgtsReal).filter(m => tipos.includes(m.tipo)).pop();
-  return u ? somaMeses(u.data, 24) : null;
+  const fim = m => (m.tipo === 'uso-prestacao' ? somaMeses(m.data, m.meses ?? 12) : m.data);
+  const l = porData(fgtsReal).filter(m => m.tipo === 'uso-amortizacao' || (janela === 'reiniciaNoFim' && m.tipo === 'uso-prestacao')).map(fim).sort();
+  return l.length ? somaMeses(l.at(-1), 24) : null;
+}
+
+/**
+ * Pedido real de FGTS nas prestações ainda em curso: { porMes, meses, restante } (meses e valor ainda não abatidos) ou
+ * null. O abatimento começa no 1º vencimento depois do pedido; cada parcela lançada depois dele consome `fgtsPrestacao`
+ * (ou valor/meses, se a parcela não informou).
+ */
+export function creditoFGTSPrestacao(fgtsReal, parcelas) {
+  const u = porData(fgtsReal).filter(m => m.tipo === 'uso-prestacao' && m.meses > 0).pop();
+  if (!u) return null;
+  const porMes = u.valor / u.meses;
+  const usadas = parcelas.filter(p => p.vencimento > u.data).sort((a, b) => (a.vencimento < b.vencimento ? -1 : 1)).slice(0, u.meses);
+  const meses = u.meses - usadas.length, restante = u.valor - usadas.reduce((s, p) => s + (p.fgtsPrestacao ?? porMes), 0);
+  return meses > 0 && restante > 0.005 ? { porMes, meses, restante } : null;
 }
 
 export const podeUsarFGTS = (fgtsReal, data, janela) => (proximoUsoFGTS(fgtsReal, janela) ?? '') <= data;

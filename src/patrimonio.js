@@ -21,18 +21,18 @@ export function venda(config, premissas, data) {
 }
 export const vendaLiquida = (config, premissas, data) => venda(config, premissas, data).liquida;
 
-/** patrimônio = venda líquida − saldo devedor + carteira líquida + FGTS. */
+/** patrimônio = venda líquida − saldo devedor + carteira líquida + FGTS (com o que ainda falta abater de um pedido de FGTS nas prestações). */
 export const patrimonio = (config, premissas, data, { saldo, carteira = 0, fgts = 0 }) =>
   vendaLiquida(config, premissas, data) - saldo + carteira + fgts;
 
 /** Patrimônio de um mês projetado (no vencimento da competência). `cfg` = estado.cfg (ou a config completa). */
 export const patrimonioMes = (cfg, premissas, m) =>
   patrimonio(cfg, premissas, dataMes(m.competencia, cfg.contrato.diaVencimento ?? 5),
-    { saldo: m.saldoFinal, carteira: m.carteiraLiquida ?? 0, fgts: m.fgtsSaldo ?? 0 });
+    { saldo: m.saldoFinal, carteira: m.carteiraLiquida ?? 0, fgts: (m.fgtsSaldo ?? 0) + (m.fgtsCredito ?? 0) });
 
 /** Patrimônio de hoje na linha real (sem carteira): estado = estadoReal(...). */
 export const patrimonioHoje = (estado, premissas, data) =>
-  patrimonio(estado.cfg, premissas, data, { saldo: estado.saldo, fgts: estado.fgts?.saldo ?? 0 });
+  patrimonio(estado.cfg, premissas, data, { saldo: estado.saldo, fgts: (estado.fgts?.saldo ?? 0) + (estado.fgts?.credito?.restante ?? 0) });
 
 export const deflator = (ipcaAA, anos) => (1 + ipcaAA) ** anos;
 

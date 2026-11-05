@@ -66,6 +66,7 @@ const eventosProj = m => [
   ...(m.amortBolso > 0 ? [{ tipo: 'amortizacao', origem: 'bolso', valor: m.amortBolso }] : []),
   ...(m.amortFGTS > 0 ? [{ tipo: 'amortizacao', origem: 'fgts', valor: m.amortFGTS }] : []),
   ...(m.resgate > 0 ? [{ tipo: 'amortizacao', origem: 'resgate', valor: m.resgate }] : []),
+  ...(m.fgtsPedido > 0 ? [{ tipo: 'fgts-pedido', valor: m.fgtsPedido }] : []),
   ...(m.fgtsPrestacao > 0 ? [{ tipo: 'fgts-prestacao', valor: m.fgtsPrestacao, mes: m.fgtsPrestacaoMes }] : []),
   ...(m.fgtsSaldo != null && m.fgtsLivreEm === m.competencia ? [{ tipo: 'janela-fgts', saldo: m.fgtsDisponivel }] : []),
 ];
@@ -210,10 +211,10 @@ export function painelComparativo(dados, horizonte = 10, deflacionar = false) {
     let imovel, divida, carteira, fgts, m = null, custoBolso = 0, fgtsUsado = 0, fgtsPrestacoes = 0;
     if (comp == null) { // hoje: todos partem do real
       const dt = P.hoje;
-      imovel = vendaLiquida(cfg, prem, dt); divida = P.estado.saldo; carteira = 0; fgts = P.estado.fgts?.saldo ?? 0;
+      imovel = vendaLiquida(cfg, prem, dt); divida = P.estado.saldo; carteira = 0; fgts = (P.estado.fgts?.saldo ?? 0) + (P.estado.fgts?.credito?.restante ?? 0);
     } else {
       m = ms.find(x => x.competencia === comp);
-      imovel = vendaLiquida(cfg, prem, dataMes(comp, dia)); divida = m.saldoFinal; carteira = m.carteiraLiquida ?? 0; fgts = m.fgtsSaldo ?? 0;
+      imovel = vendaLiquida(cfg, prem, dataMes(comp, dia)); divida = m.saldoFinal; carteira = m.carteiraLiquida ?? 0; fgts = (m.fgtsSaldo ?? 0) + (m.fgtsCredito ?? 0);
       const ate = ms.filter(x => x.competencia <= comp);
       custoBolso = m.custoBolso; fgtsPrestacoes = soma(ate, x => x.fgtsPrestacao ?? 0); fgtsUsado = soma(ate, x => x.amortFGTS) + fgtsPrestacoes;
     }

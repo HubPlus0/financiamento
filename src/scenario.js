@@ -1,6 +1,6 @@
 // Cenários, projeção e versões (puro: sem DOM, sem IndexedDB). Fase 4.
 import { r2, taxaMensal, passoMes, seguros, faixa, prazoAposAmortizacao, valorDeCorte, replayHistorico, somaMeses } from './engine.js';
-import { saldoFGTSReal, proximoUsoFGTS, selicDe, cdiDe, trVinculada, PISO_TR, dataMes, aportar, render, resgatar, liquidoCarteira } from './invest.js';
+import { saldoFGTSReal, proximoUsoFGTS, creditoFGTSPrestacao, selicDe, cdiDe, trVinculada, PISO_TR, dataMes, aportar, render, resgatar, liquidoCarteira } from './invest.js';
 import { patrimonioMes, deflator } from './patrimonio.js';
 
 const proxComp = c => somaMeses(c + '-01', 1).slice(0, 7);
@@ -8,34 +8,23 @@ const somaMes = (c, n) => somaMeses(c + '-01', n).slice(0, 7);
 const mesesEntre = (a, b) => (+b.slice(0, 4) - +a.slice(0, 4)) * 12 + (+b.slice(5, 7) - +a.slice(5, 7));
 const soma = (l, f) => l.reduce((s, x) => s + f(x), 0);
 
-// ---- FGTS nas prestações
-// Regras confirmadas com a Caixa: o FGTS paga até 80% da prestação, por 12 meses seguidos, débito mês a mês (os depósitos
-// que entram no período podem ser usados); pode ser pedido logo depois de uma amortização com FGTS; terminados os 12
-// meses, pode pedir de novo. Duas regras NÃO confirmadas viram premissa (padrão = escolha do usuário):
-//  fgtsPrestacaoBase: 'encargo' (80% da prestação total: A+J + seguros + taxa) | 'aj' (80% só de A+J);
+// ---- FGTS nas prestações ("Usar FGTS em 12 prestações", regra do app da Caixa)
+// Você pede um valor; ele é debitado INTEIRO do FGTS no pedido e abate a prestação em partes iguais, mês a mês, por
+// 12 meses ou pelo prazo restante (o que for menor). Limite: até 80% da prestação por mês (teto do pedido = 80% ×
+// prestação × meses), e o saldo do FGTS na hora. Os depósitos que entram durante o período ficam no FGTS para o próximo
+// pedido. Terminado o período, pode pedir de novo; pode ser pedido logo depois de uma amortização com FGTS.
+// Premissas (padrão = escolha do usuário): fgtsPrestacaoBase: 'encargo' (80% da prestação total) | 'aj' (só A+J);
 //  fgtsPrestacaoJanela: efeito na janela de 24 meses da amortização com FGTS: 'naoAfeta' | 'reiniciaNoFim' (a janela
-//  só abre 24 meses depois do fim dos 12 meses) | 'bloqueiaDurante' (não amortiza com FGTS enquanto paga prestações).
+//  só abre 24 meses depois do fim do período) | 'bloqueiaDurante' (não amortiza com FGTS durante o período).
+// Hipótese do app (sem regra da Caixa): se a dívida acaba antes do fim do período, o que sobrou do pedido volta ao FGTS.
 export const FGTS_PRESTACAO_MESES = 12;
 export const PADRAO_FGTS_PRESTACAO = { fgtsPrestacaoPct: 0.8, fgtsPrestacaoBase: 'encargo', fgtsPrestacaoJanela: 'naoAfeta' };
 export const regraFGTSPrestacao = (p = {}) => ({ pct: p.fgtsPrestacaoPct ?? PADRAO_FGTS_PRESTACAO.fgtsPrestacaoPct,
   base: p.fgtsPrestacaoBase ?? PADRAO_FGTS_PRESTACAO.fgtsPrestacaoBase, janela: p.fgtsPrestacaoJanela ?? PADRAO_FGTS_PRESTACAO.fgtsPrestacaoJanela });
-/** Teto do FGTS na prestação do mês: pct × (encargo ou A+J), em centavos. `m` = mês projetado (encargo, pmt). */
+/** Teto mensal: pct × (encargo ou A+J) do mês, em centavos. `m` = mês projetado (encargo, pmt). */
 export const tetoFGTSPrestacao = (regra, m) => r2(regra.pct * (regra.base === 'aj' ? r2(m.pmt) : m.encargo));
-
-/**
- * Mês do período do FGTS nas prestações em `comp`: { mes (1..dur), dur } ou null fora dele.
- * cfg = cenario.fgtsPrestacao: { modo: 'periodo', inicio: 'YYYY-MM', meses?: 1..12, renovar? } | { modo: 'auto' }.
- * Com `renovar` (e no automático) um período novo de 12 meses começa logo depois do anterior, até a quitação.
- * `autoDesde` = mês em que o automático ligou (calculado na projeção).
- */
-export function mesFGTSPrestacao(cfg, comp, autoDesde) {
-  const ini = cfg?.modo === 'auto' ? autoDesde : cfg?.modo === 'periodo' ? cfg.inicio : null;
-  if (!ini || comp < ini) return null;
-  const k = mesesEntre(ini, comp), N = FGTS_PRESTACAO_MESES;
-  if (cfg.modo === 'auto' || cfg.renovar) return { mes: k % N + 1, dur: N };
-  const dur = cfg.meses ?? N;
-  return k < dur ? { mes: k + 1, dur } : null;
-}
+/** Teto do pedido: teto mensal do mês do pedido × meses do período. */
+export const tetoPedidoFGTS = (regra, m, meses) => r2(tetoFGTSPrestacao(regra, m) * meses);
 
 /**
  * Início do FGTS nas prestações automático, a partir da projeção do mesmo cenário SEM ele (o FGTS na prestação não muda
@@ -48,17 +37,20 @@ export function inicioAutoFGTSPrestacao(meses) {
   return ativos.slice(k + 1).find(m => (m.fgtsLivreEm ?? '') >= q)?.competencia ?? null;
 }
 
-/** Erros da configuração do FGTS nas prestações (null/undefined = desligado: sem erro). */
+/**
+ * Erros da configuração (null/undefined = desligado: sem erro). cfg = cenario.fgtsPrestacao:
+ * { modo: 'periodo', inicio: 'YYYY-MM', renovar?, valor? } | { modo: 'auto', valor? }. `valor` = quanto pedir em cada
+ * pedido (sem ele, o máximo: teto do pedido ou o saldo do FGTS). Com `renovar` (e no automático) um pedido novo é feito
+ * no mês seguinte ao fim de cada período, até a quitação.
+ */
 export function errosFGTSPrestacao(estado, cfg) {
   if (!cfg) return [];
   const erros = [];
   if (!estado.fgts) erros.push('Sem saldo de FGTS informado: não dá para usar o FGTS nas prestações.');
+  if (cfg.valor != null && !(cfg.valor > 0)) erros.push('O valor do pedido precisa ser maior que zero (ou vazio, para o máximo).');
   if (cfg.modo === 'auto') return erros;
   if (cfg.modo !== 'periodo') return [...erros, `Modo do FGTS nas prestações desconhecido: ${cfg.modo}.`];
-  if (!/^\d{4}-\d{2}$/.test(cfg.inicio ?? '')) erros.push('Informe o mês de início do FGTS nas prestações.');
-  const n = cfg.meses ?? FGTS_PRESTACAO_MESES;
-  if (!Number.isInteger(n) || n < 1) erros.push('O período do FGTS nas prestações precisa de pelo menos 1 mês.');
-  else if (n > FGTS_PRESTACAO_MESES && !cfg.renovar) erros.push(`O FGTS paga prestações por no máximo ${FGTS_PRESTACAO_MESES} meses seguidos. Para seguir depois disso, ligue a renovação (um pedido novo a cada ${FGTS_PRESTACAO_MESES} meses).`);
+  if (!/^\d{4}-\d{2}$/.test(cfg.inicio ?? '')) erros.push('Informe o mês do primeiro pedido do FGTS nas prestações.');
   return erros;
 }
 
@@ -95,7 +87,8 @@ export function estadoReal({ config, parcelas, extras, premissas, fgtsReal = [] 
   // ponytail: usos descontados de uma vez, sem tirar o rendimento deles depois da data do uso (centavos)
   if (sf != null) for (let c = proxComp(base.slice(0, 7)); c < comp0; c = proxComp(c)) sf = sf * rend + depositoFGTS({ deposito: dep, depositos }, c) * (c.endsWith('-12') ? 2 : 1);
   const pu = proximoUsoFGTS(fgtsReal, regraFGTSPrestacao(premissas).janela);
-  const fgts = { saldo: sf ?? 0, livreEm: pu?.slice(0, 7) ?? null, deposito: dep, depositos,
+  const credito = creditoFGTSPrestacao(fgtsReal, parcelas); // pedido de FGTS nas prestações ainda abatendo
+  const fgts = { saldo: sf ?? 0, livreEm: pu?.slice(0, 7) ?? null, deposito: dep, depositos, ...(credito && { credito }),
     aviso: sf == null ? 'Saldo do FGTS nunca informado: usando 0.' : null };
   return { competencia: comp0, ...linhaReal.estado, fatorTR: ult.fatorTR, fgts,
     contrato: { taxaNominalAA, valorAvaliacao, taxaOperacional },
@@ -140,6 +133,9 @@ function planoDoMes(cenario, comp, extra) {
  * Orçamento do mês = base[mês] + extra confirmado; `base` = encargo da referência (padrão: o encargo do próprio
  * cenário). Sem orçamento nem base, aporte fica null. FGTS (se `estado.fgts`): rende e recebe depósito no mês, e só
  * pode ser usado desde `livreEm`; projetar não recusa nada (quem recusa é `validarMes`).
+ * FGTS nas prestações (cenario.fgtsPrestacao, e o pedido real em curso em `estado.fgts.credito`): no mês do pedido o
+ * valor sai todo do FGTS; cada mês do período abate valor/meses da prestação (`fgtsPrestacao`), e o resto fica em
+ * `fgtsCredito` (ainda é do usuário: entra no patrimônio).
  * Valor de corte: com `usarValorDeCorte`, amortBolso cai até o corte do prazo que alcança e a sobra vira aporte.
  */
 export function projetar(estado, cenario, orcamento, premissas, { base, ate } = {}) {
@@ -154,6 +150,10 @@ export function projetar(estado, cenario, orcamento, premissas, { base, ate } = 
   // regra pronta: usarFGTS liga o FGTS em toda janela. Manual com usarFGTS: depois do 1º uso digitado, cada janela usa o saldo todo.
   let fgtsAuto = auto && (cenario.usarFGTS ?? cenario.regra === 'amortizarTudo');
   const rfp = regraFGTSPrestacao(premissas); // FGTS nas prestações (cenario.fgtsPrestacao; o automático começa em fpDesde)
+  // período em curso: { mes, n, porMes, restante }; começa com o pedido real ainda não consumido, se houver
+  const cr = fg?.credito;
+  let bloco = cr?.meses > 0 && cr.restante > 0.005 ? { mes: 0, n: cr.meses, porMes: cr.porMes, restante: cr.restante } : null, pedidos = 0;
+  const podePedir = c => !!fpc && (fpc.modo === 'auto' ? !!fpDesde && c >= fpDesde : c >= fpc.inicio && (!!fpc.renovar || pedidos === 0));
   const meses = []; let custo = 0;
   // carteira por lotes: só existe com orçamento (sem ele o aporte é null e carteiraBruta/Liquida ficam null)
   let lotes = orcamento || base ? [] : null;
@@ -168,7 +168,7 @@ export function projetar(estado, cenario, orcamento, premissas, { base, ate } = 
     let fgDisp = 0;
     // 13º: dezembro deposita em dobro
     if (fg) { fg.saldo = fg.saldo * rend * (1 + tr) + depositoFGTS(fg, comp) * (comp.endsWith('-12') ? 2 : 1); fgDisp = comp >= (fg.livreEm ?? '') ? fg.saldo : 0; }
-    let fgtsPrestacao = 0, fpMes = null, fpFim = false;
+    let fgtsPrestacao = 0, fpMes = null, fpFim = false, fgtsPedido = 0, fgtsPedidoTeto = null;
     const ex = { amortBolso: 0, amortFGTS: 0, resgate: 0 };
     let p = { saldoCorrigido: 0, juros: 0 }, sg = { mip: 0, dfi: 0 }, amortizacao = 0, pmtMes = 0, saldoAposParcela = 0, taxa = 0;
     let resto = 0, proxPmt = pmt, corte = null, fx = null, encargo = 0; const eventos = [];
@@ -183,14 +183,19 @@ export function projetar(estado, cenario, orcamento, premissas, { base, ate } = 
         prazo = 0; amortizacao = p.saldoCorrigido; pmtMes = amortizacao + p.juros; saldoAposParcela = 0;
       }
       encargo = r2(pmtMes) + r2(sg.mip) + r2(sg.dfi) + taxa;
-      if (fpc) { // FGTS na prestação: no vencimento, antes da amortização extra; não depende da janela de 24 meses
-        const per = mesFGTSPrestacao(fpc, comp, fpDesde);
-        if (per) {
-          fpMes = per.mes; fpFim = per.mes === per.dur;
-          fgtsPrestacao = Math.max(0, Math.min(tetoFGTSPrestacao(rfp, { pmt: pmtMes, encargo }), fg.saldo));
-          fg.saldo -= fgtsPrestacao;
-          fgDisp = comp >= (fg.livreEm ?? '') && !(rfp.janela === 'bloqueiaDurante') ? fg.saldo : 0;
+      if (fg) { // FGTS na prestação: no vencimento, antes da amortização extra; não depende da janela de 24 meses
+        if (!bloco && podePedir(comp)) { // pedido: 12 meses ou o prazo restante; sai todo do FGTS agora
+          const n = Math.min(FGTS_PRESTACAO_MESES, prazo + 1);
+          fgtsPedidoTeto = tetoPedidoFGTS(rfp, { pmt: pmtMes, encargo }, n);
+          const v = Math.floor(Math.min(fpc.valor ?? Infinity, fgtsPedidoTeto, fg.saldo) * 100 + 1e-6) / 100;
+          if (v >= 0.01) { fg.saldo -= v; fgtsPedido = v; pedidos++; bloco = { mes: 0, n, porMes: v / n, restante: v }; }
         }
+        if (bloco) {
+          bloco.mes++; fpMes = bloco.mes; fpFim = bloco.mes >= bloco.n;
+          fgtsPrestacao = Math.min(fpFim ? bloco.restante : bloco.porMes, bloco.restante, encargo);
+          bloco.restante -= fgtsPrestacao;
+        }
+        fgDisp = comp >= (fg.livreEm ?? '') && !(bloco && rfp.janela === 'bloqueiaDurante') ? fg.saldo : 0;
       }
       // regra pronta: o bolso liberado pelo FGTS na prestação entra como extra do mês (amortiza, divide ou investe conforme a regra)
       const pl = planoDoMes(cenario, comp, extraDe(orcamento, comp) + fgtsPrestacao);
@@ -216,6 +221,9 @@ export function projetar(estado, cenario, orcamento, premissas, { base, ate } = 
     const livre = fg ? fg.livreEm ?? null : null;
     if (fg && ex.amortFGTS > 0) { fg.saldo -= ex.amortFGTS; fg.livreEm = somaMeses(comp + '-01', 24).slice(0, 7); }
     if (fpFim && rfp.janela === 'reiniciaNoFim') { const l = somaMes(comp, 24); if (l > (fg.livreEm ?? '')) fg.livreEm = l; }
+    // fim do período, ou a dívida acabou antes dele: o que sobrou do pedido volta ao FGTS (hipótese do app)
+    if (bloco && (fpFim || !(prazo > 0 && resto > 0))) { fg.saldo += Math.max(0, bloco.restante); bloco = null; }
+    if (fgtsPedido > 0) eventos.push('fgts-pedido');
     if (fgtsPrestacao > 0) eventos.push('fgts-prestacao');
     // do bolso sai só a parte da parcela que o FGTS não pagou: com o mesmo orçamento, o aporte sobe
     const doBolso = encargo - fgtsPrestacao;
@@ -232,6 +240,7 @@ export function projetar(estado, cenario, orcamento, premissas, { base, ate } = 
       orcamento: orc, aporte, custoBolso: custo, valorCorte: corte, carteiraBruta: lotes ? soma(lotes, l => l.valor) : null,
       carteiraLiquida: lotes ? liquidoCarteira(lotes, data, opc) : null, carteiraDisponivel: disp,
       fgtsSaldo: fg ? fg.saldo : null, fgtsDisponivel: fgDisp, fgtsLivreEm: livre, fgtsPrestacao, fgtsPrestacaoMes: fpMes,
+      fgtsPedido, fgtsPedidoTeto, fgtsCredito: bloco ? bloco.restante : 0,
       saldoFinal: resto, prazoRestante: prazo, faixa: fx, eventos });
     saldo = resto; pmt = proxPmt; comp = proxComp(comp);
   }
@@ -250,18 +259,19 @@ export const resumo = meses => ({
 });
 
 // Arredondamento só do que é gravado (as contas de projetar seguem em precisão total). Listas explícitas por campo.
-const DINHEIRO = 'saldoInicial saldoCorrigido juros amortizacao pmt mip dfi taxa encargo saldoAposParcela amortBolso amortFGTS resgate orcamento aporte custoBolso valorCorte carteiraBruta carteiraLiquida carteiraDisponivel fgtsSaldo fgtsDisponivel fgtsPrestacao saldoFinal'.split(' ');
+const DINHEIRO = 'saldoInicial saldoCorrigido juros amortizacao pmt mip dfi taxa encargo saldoAposParcela amortBolso amortFGTS resgate orcamento aporte custoBolso valorCorte carteiraBruta carteiraLiquida carteiraDisponivel fgtsSaldo fgtsDisponivel fgtsPrestacao fgtsPedido fgtsCredito saldoFinal'.split(' ');
 const DINHEIRO_RESUMO = 'totalJuros totalTR totalSeguros totalTaxas custoBolso usoFGTS usoFGTSPrestacao'.split(' ');
 const dec = (x, n) => (x == null ? x : Number(x.toFixed(n))); // casas decimais fixas: 2 em reais, 8 em taxas, 10 em fatores
 
 const arred = (o, campos) => { for (const c of campos) if (c in o) o[c] = dec(o[c], 2); return o; };
 // FGTS nas prestações só entra no registro dos meses em que está ligado (enxuto; quem lê usa `?? 0`)
-const mesGravado = ({ fgtsPrestacao, fgtsPrestacaoMes, ...m }) => ({ ...arred({ ...m, ...(fgtsPrestacaoMes != null && { fgtsPrestacao, fgtsPrestacaoMes }) }, DINHEIRO), trMes: dec(m.trMes, 8) });
+const mesGravado = ({ fgtsPrestacao, fgtsPrestacaoMes, fgtsPedido, fgtsPedidoTeto, fgtsCredito, ...m }) =>
+  ({ ...arred({ ...m, ...(fgtsPrestacaoMes != null && { fgtsPrestacao, fgtsPrestacaoMes, fgtsCredito }), ...(fgtsPedido > 0 && { fgtsPedido }) }, DINHEIRO), trMes: dec(m.trMes, 8) });
 function estadoGravado(e) {
   const g = arred({ ...e }, ['saldo', 'pmt']);
   g.fatorTR = dec(e.fatorTR, 10);
   g.contrato = { ...e.contrato, taxaNominalAA: dec(e.contrato.taxaNominalAA, 10), ...arred({ valorAvaliacao: e.contrato.valorAvaliacao, taxaOperacional: e.contrato.taxaOperacional }, ['valorAvaliacao', 'taxaOperacional']) };
-  if (e.fgts) g.fgts = arred({ ...e.fgts }, ['saldo', 'deposito']);
+  if (e.fgts) g.fgts = arred({ ...e.fgts, ...(e.fgts.credito && { credito: arred({ ...e.fgts.credito }, ['porMes', 'restante']) }) }, ['saldo', 'deposito']);
   return g;
 }
 
@@ -345,7 +355,7 @@ export function premissasPadrao(linhaReal, existente = {}) {
       pctCDI: 'decisão de design (CDB 100% do CDI)', isentoIR: 'decisão de design (com IR)',
       ipcaAA: 'Focus, projeção 2027, out/2026 — conferir', valorizacaoImovelAA: 'planilha dele',
       custoVendaPct: 'corretagem', irGanhoCapitalImovel: 'conservador (15%)', fgtsRendAA: 'lei (3% a.a. + TR)',
-      fgtsPrestacaoPct: 'Caixa: até 80% da prestação, 12 meses seguidos', fgtsPrestacaoBase: 'não confirmado com a Caixa: escolha do usuário',
+      fgtsPrestacaoPct: 'Caixa: até 80% da prestação; o pedido sai todo do FGTS e abate em 12 meses', fgtsPrestacaoBase: 'não confirmado com a Caixa: escolha do usuário',
       fgtsPrestacaoJanela: 'não confirmado com a Caixa: escolha do usuário',
       mipTaxa: 'calibrada no histórico', dfiTaxa: 'calibrada no histórico' } };
 }
@@ -381,12 +391,14 @@ const noMes = (ms, comp) => ms.find(m => m.competencia === comp);
  */
 function checarFGTSPrestacao(estado, cenario, premissas, m, v = {}) {
   const erros = errosFGTSPrestacao(estado, cenario.fgtsPrestacao), avisos = [];
-  if (!m?.fgtsPrestacaoMes) return { erros, avisos };
-  const rg = regraFGTSPrestacao(premissas), teto = tetoFGTSPrestacao(rg, m);
-  if (rg.janela === 'bloqueiaDurante' && v.amortFGTS > 0) erros.push('FGTS bloqueado: está pagando prestações neste mês e a premissa não deixa amortizar com FGTS ao mesmo tempo.');
-  if (m.fgtsPrestacao < teto - 0.005) avisos.push(m.fgtsPrestacao > 0.005
-    ? `FGTS insuficiente para ${Math.round(rg.pct * 100)}% da prestação: paga ${m.fgtsPrestacao.toFixed(2)} de ${teto.toFixed(2)}; o resto sai do bolso.`
-    : 'Sem saldo de FGTS neste mês: a prestação sai toda do bolso.');
+  if (!m) return { erros, avisos };
+  const rg = regraFGTSPrestacao(premissas);
+  if (m.fgtsPrestacaoMes && rg.janela === 'bloqueiaDurante' && v.amortFGTS > 0) erros.push('FGTS bloqueado: está pagando prestações com FGTS neste mês e a premissa não deixa amortizar com FGTS ao mesmo tempo.');
+  // pedido no mês: o saldo do FGTS precisa estar lá inteiro; com menos, o pedido é menor (ou não sai)
+  const quer = Math.min(cenario.fgtsPrestacao?.valor ?? Infinity, m.fgtsPedidoTeto ?? 0);
+  if (m.fgtsPedidoTeto != null && (m.fgtsPedido ?? 0) < quer - 0.005) avisos.push(m.fgtsPedido > 0
+    ? `O saldo do FGTS no pedido cobre só ${m.fgtsPedido.toFixed(2)} de ${quer.toFixed(2)} (até ${Math.round(rg.pct * 100)}% da prestação × ${Math.round(m.fgtsPedidoTeto / tetoFGTSPrestacao(rg, m))} meses): abate ${m.fgtsPrestacao.toFixed(2)} por mês.`
+    : 'Sem saldo de FGTS para o pedido neste mês: a prestação sai toda do bolso e o pedido fica para quando houver saldo.');
   return { erros, avisos };
 }
 
