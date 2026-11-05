@@ -127,7 +127,8 @@ const perto = (a, b, tol, msg) => assert(Math.abs(a - b) <= tol, `${msg}: ${a} v
     m[e.origem === 'fgts' ? 'amortFGTS' : 'amortBolso'] += e.valor;
   }
   const pontos = cheio.meses.map(m => ({ desde: m.competencia, valor: m.calc.trMes }));
-  const proj = S.projetar(estIni, { id: 'bt', meses }, null, { ...premReal, trMensal: { modo: 'curva', pontos } });
+  // sem FGTS: o backtest mede o saldo devedor; o saldo estimado do FGTS limitaria as amortizações reais com FGTS
+  const proj = S.projetar({ ...estIni, fgts: null }, { id: 'bt', meses }, null, { ...premReal, trMensal: { modo: 'curva', pontos } });
   let maxDif = 0, maxReal = 0, nBt = 0;
   for (const m of proj) {
     const k = cheio.meses.findIndex(x => x.competencia === m.competencia);
