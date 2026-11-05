@@ -189,6 +189,21 @@ const json = x => JSON.parse(JSON.stringify(x));
   ['src/paineis.js', 'src/ui/dados.js', 'src/ui/comparativo.js'].forEach(f => assert(sw.includes(`'${f}'`), 'sw.js sem ' + f));
   assert(+sw.match(/VERSAO = 'v(\d+)'/)[1] >= 8, 'VERSAO sobe');
 
+  // ---- FGTS nas prestações: próxima parcela por origem, eventos, origem do total pago e FGTS usado no comparativo
+  const fpCen = cenarios.map(c => (c.id === 'inv' ? { ...c, planoAtivo: true, fgtsPrestacao: { modo: 'periodo', inicio: '2030-03', renovar: true } } : { ...c, planoAtivo: false }));
+  const pfp = [{ ...parcelas[6], fgtsPrestacao: 400 }, { ...parcelas[7], fgtsPrestacao: 400 }];
+  const rawFP = { ...raw, cenarios: fpCen, parcelas: [...parcelas.slice(0, 6), ...pfp], versoes: [] };
+  const sf = PN.painelStatus(rawFP), pf = sf.proximaParcela;
+  assert(pf.fgtsPrestacao > 0 && pf.fgtsPrestacaoMes === 1);
+  perto(pf.doBolso + pf.fgtsPrestacao, pf.encargo, 1e-9, 'parcela = bolso + FGTS');
+  assert(sf.serie.find(x => !x.real).eventos.some(e => e.tipo === 'fgts-prestacao'));
+  assert(sf.serie.filter(x => x.real).slice(-2).every(x => x.eventos.some(e => e.tipo === 'fgts-prestacao' && e.valor === 400)));
+  assert.strictEqual(sf.detalheOrigem.fgts.prestacoes, 800);
+  perto(sf.gastoPorOrigem.fgts, 10000 + 2000 + 800, 1e-6, 'FGTS: entrada + amortização + prestações reais');
+  const cf = PN.painelComparativo(rawFP, 5).cenarios.find(c => c.id === 'inv');
+  assert(cf.fgtsPrestacoes > 0 && cf.fgtsUsado >= cf.fgtsPrestacoes);
+  assert.strictEqual(PN.painelComparativo(raw, 5).cenarios.find(c => c.id === 'inv').fgtsPrestacoes, 0);
+
   // ---- histórico real (pulado sem seed)
   const arq = path.join(__dirname, '..', 'seed', 'seed.json');
   if (!fs.existsSync(arq)) return console.log('ok (sem seed: histórico real pulado)');
