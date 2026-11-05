@@ -92,6 +92,19 @@ const perto = (a, b, tol, msg) => assert(Math.abs(a - b) <= tol, `${msg}: ${a} v
   assert(g.invfp[24].carteiraLiquida > g.inv[24].carteiraLiquida);
   assert(g.invfp[24].fgtsSaldo < g.inv[24].fgtsSaldo);
 
+  // uso contínuo desde já (renovando) convive com cenários sem janela de FGTS; o bolso liberado segue a regra do cenário
+  const cont = periodo({ renovar: true });
+  const grupo2 = [grupo[0], { ...base, id: 'tudo', regra: 'amortizarTudo', usarFGTS: false }, { ...base, id: 'tudofp', regra: 'amortizarTudo', usarFGTS: false, fgtsPrestacao: cont },
+    { ...base, id: 'meio', regra: { dividir: 0.5 } }, { ...base, id: 'meiofp', regra: { dividir: 0.5 }, fgtsPrestacao: cont }];
+  const g2 = S.projetarGrupo(estado, grupo2, orc, { p: prem2 });
+  const ativos = ms => ms.filter(m => m.saldoInicial > 0);
+  assert(ativos(g2.tudofp).every(m => m.fgtsPrestacaoMes != null && m.amortFGTS === 0), 'contínuo até quitar, sem janelas');
+  perto(g2.tudofp[0].amortBolso - g2.tudo[0].amortBolso, g2.tudofp[0].fgtsPrestacao, 1e-6, 'amortizar tudo: o liberado amortiza');
+  perto(g2.tudofp[0].aporte, g2.tudo[0].aporte, 1e-6, 'amortizar tudo: aporte igual');
+  perto(g2.meiofp[0].amortBolso - g2.meio[0].amortBolso, g2.meiofp[0].fgtsPrestacao / 2, 1e-6, 'dividir: metade amortiza');
+  assert(ativos(g2.tudofp).length < ativos(g2.tudo).length, 'quita antes');
+  for (const c of grupo2) perto(g2[c.id].at(-1).custoBolso, g2.ref.at(-1).custoBolso, 0.01, `custoBolso igual (${c.id})`);
+
   // ---- conservação em gastos e origem (FGTS × bolso)
   for (const c of grupo) {
     const gs = P.gastos(cfg, g[c.id]);
@@ -125,7 +138,8 @@ const perto = (a, b, tol, msg) => assert(Math.abs(a - b) <= tol, `${msg}: ${a} v
   assert(au.slice(k + 1, au.indexOf(quit) + 1).every(m => m.fgtsPrestacaoMes != null), 'depois, todo mês até quitar');
   assert(au[k + 1].fgtsPrestacao > 0);
   assert(sa.at(-1).fgtsSaldo > au.at(-1).fgtsSaldo, 'sem o automático o FGTS fica parado');
-  perto(sa.reduce((s, m) => s + m.aporte, 0) + au.reduce((s, m) => s + m.fgtsPrestacao, 0), au.reduce((s, m) => s + m.aporte, 0), 1e-6, 'o FGTS na prestação vira aporte');
+  perto(au[k + 1].amortBolso - sa[k + 1].amortBolso, au[k + 1].fgtsPrestacao, 1e-6, 'amortizar tudo: o bolso liberado amortiza');
+  perto(au[k + 1].aporte, sa[k + 1].aporte, 1e-6, 'e o aporte fica igual');
 
   // sem extra do bolso, o FGTS amortiza a cada 24 meses; a última janela é a que deixa 24 meses ou menos de prazo
   const so = { ...base, id: 's', regra: 'investirTudo', usarFGTS: true, fgtsPrestacao: { modo: 'auto' } };

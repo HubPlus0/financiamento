@@ -71,7 +71,7 @@ function fgtsPrestacaoHTML(cen, ms, mes, comp, prem, estado) {
     ${fp?.modo === 'periodo' ? `<div class="field"><label for="e-fpini">Início do período</label><div class="inp sm"><input id="e-fpini" type="month" value="${fp.inicio}" style="font-size:16px"></div></div>
       <div class="toggle"><span>Renovar a cada 12 meses<small class="sub" style="display:block">Pede de novo ao fim de cada período, até quitar</small></span><button class="sw" role="switch" aria-checked="${!!fp.renovar}" aria-label="Renovar a cada 12 meses" data-act="fprenov"></button></div>` : ''}
     ${st ? `<div class="hint">${st}</div>` : ''}${doMes ? `<div class="hint">${doMes}</div>` : ''}
-    <div class="hint">O FGTS paga até ${pct}% ${base} por ${N} meses seguidos, com os depósitos que entram no período; o resto sai do bolso e a sobra do orçamento vai para a carteira. Vale a pena <b>depois da última janela de amortização</b>: quando faltam 24 meses ou menos, a próxima janela só abriria com a dívida quitada e o FGTS ficaria parado.</div></div>`;
+    <div class="hint">O FGTS paga até ${pct}% ${base} por ${N} meses seguidos, com os depósitos que entram no período; o resto sai do bolso. O bolso liberado segue a regra do cenário (amortiza, divide ou vai para a carteira; no manual, vira aporte). <b>Por período, renovando</b>, o depósito de cada mês já paga a parcela, em vez de esperar até 24 meses pela janela rendendo 3% + TR. <b>Automático</b> liga só depois da última janela de amortização, quando o FGTS ficaria parado de vez.</div></div>`;
 }
 
 function dockHTML(p, mes, manual, cen, ctx) {

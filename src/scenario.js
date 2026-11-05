@@ -126,7 +126,7 @@ const extraDe = (orc, comp) => (orc?.meses?.[comp]?.confirmado ? orc.meses[comp]
 const teto2 = x => Math.ceil(x * 100 - 1e-6) / 100;
 export const APORTE_MIN = -0.10; // a Caixa aceita PMT novo ~R$ 0,05 acima; o aporte pode ficar uns centavos negativo
 
-/** Regras prontas (derivadas do orçamento na hora): amortBolso do mês. `manual` usa só meses confirmados. */
+/** Regras prontas (derivadas do orçamento na hora): amortBolso do mês. `manual` usa só meses confirmados. `extra` já inclui o bolso liberado pelo FGTS na prestação. */
 function planoDoMes(cenario, comp, extra) {
   const r = cenario.regra ?? 'manual';
   if (r === 'manual') { const p = cenario.meses?.[comp]; return p?.confirmado ? p : {}; }
@@ -192,7 +192,8 @@ export function projetar(estado, cenario, orcamento, premissas, { base, ate } = 
           fgDisp = comp >= (fg.livreEm ?? '') && !(rfp.janela === 'bloqueiaDurante') ? fg.saldo : 0;
         }
       }
-      const pl = planoDoMes(cenario, comp, extraDe(orcamento, comp));
+      // regra pronta: o bolso liberado pelo FGTS na prestação entra como extra do mês (amortiza, divide ou investe conforme a regra)
+      const pl = planoDoMes(cenario, comp, extraDe(orcamento, comp) + fgtsPrestacao);
       resto = saldoAposParcela; proxPmt = pmtMes;
       const fgtsDigitado = pl.amortFGTS ?? 0;
       ex.amortFGTS = Math.min(fgtsAuto && !(fgtsDigitado > 0) ? fgDisp : fgtsDigitado, resto); resto -= ex.amortFGTS;
