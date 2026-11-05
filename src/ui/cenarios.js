@@ -2,7 +2,7 @@
 // e a prévia vivem em scenario.js; aqui só se lê os campos, chama as funções e desenha.
 import { salvar, apagar } from '../db.js';
 import { somaMeses } from '../engine.js';
-import { estadoReal, projetarGrupo, validarMes, previa, janelaFGTS, resumo, APORTE_MIN } from '../scenario.js';
+import { estadoReal, projetarGrupo, validarMes, previa, janelaFGTS, resumo, APORTE_MIN, definirFGTSPrestacao, regraFGTSPrestacao, tetoFGTSPrestacao, FGTS_PRESTACAO_MESES } from '../scenario.js';
 import { ler, gerarVersoes, marcarPendentes, gerarPendentes } from './versoes.js';
 import { $, $$, esc, R, nBR, num, ic, rotuloMes, nomeRegra, toast } from './comum.js';
 
@@ -49,6 +49,31 @@ function painelHTML(ctx, cen) {
    <div class="grid2"><button class="btn" data-act="pcancel">Cancelar</button><button class="btn primary" style="background:var(--f1);border-color:var(--f1);color:#fff" data-act="ndel" ${blocked ? 'disabled' : ''}>Excluir</button></div></article>`;
 }
 
+/** Bloco "FGTS nas prestações" do cenário: modo (desligado, período, automático), início, renovação e o que a projeção faz. */
+function fgtsPrestacaoHTML(cen, ms, mes, comp, prem, estado) {
+  if (cen.regra === 'referencia') return '';
+  const fp = cen.fgtsPrestacao, rg = regraFGTSPrestacao(prem), pct = Math.round(rg.pct * 100), N = FGTS_PRESTACAO_MESES;
+  const usados = ms.filter(m => m.fgtsPrestacaoMes), total = usados.reduce((s, m) => s + m.fgtsPrestacao, 0), ini = usados[0]?.competencia;
+  const base = rg.base === 'aj' ? 'do A+J' : 'da prestação';
+  const seg = (v, t) => `<button type="button" data-act="fp" data-v="${v}" aria-pressed="${(fp?.modo ?? 'off') === v}">${t}</button>`;
+  let st = '';
+  if (!estado.fgts) st = 'Sem saldo de FGTS informado: cadastre o saldo inicial na Config para usar.';
+  else if (fp?.modo === 'periodo') st = `Ligado de <b>${rotuloMes(fp.inicio)}</b> ${fp.renovar ? 'em diante, com um pedido novo a cada 12 meses até quitar' : `a <b>${rotuloMes(somaMes(fp.inicio, (fp.meses ?? N) - 1))}</b>`}. FGTS previsto nas prestações: <b>${R(total, 0)}</b>.`;
+  else if (fp?.modo === 'auto') st = ini ? `Liga em <b>${rotuloMes(ini)}</b>, depois da última amortização com FGTS, e renova até a quitação. FGTS previsto nas prestações: <b>${R(total, 0)}</b>.`
+    : 'Neste cenário o FGTS ainda tem janela de amortização antes da quitação (ou nunca amortiza): o automático não liga.';
+  let doMes = '';
+  if (mes?.fgtsPrestacaoMes) {
+    const teto = tetoFGTSPrestacao(rg, mes);
+    doMes = `Neste mês (${mes.fgtsPrestacaoMes}º de ${N}): o FGTS paga <b>${R(mes.fgtsPrestacao)}</b> da parcela de ${R(mes.encargo)} e o bolso, <b>${R(mes.encargo - mes.fgtsPrestacao)}</b>.${mes.fgtsPrestacao < teto - 0.005 ? ` <span style="color:var(--f1)">O saldo do FGTS não cobre os ${pct}% (${R(teto)}).</span>` : ''}`;
+  }
+  return `<div class="field"><label>FGTS nas prestações</label>
+    <div class="seg" role="group" aria-label="FGTS nas prestações">${seg('off', 'Desligado')}${seg('periodo', 'Por período')}${seg('auto', 'Automático')}</div>
+    ${fp?.modo === 'periodo' ? `<div class="field"><label for="e-fpini">Início do período</label><div class="inp sm"><input id="e-fpini" type="month" value="${fp.inicio}" style="font-size:16px"></div></div>
+      <div class="toggle"><span>Renovar a cada 12 meses<small class="sub" style="display:block">Pede de novo ao fim de cada período, até quitar</small></span><button class="sw" role="switch" aria-checked="${!!fp.renovar}" aria-label="Renovar a cada 12 meses" data-act="fprenov"></button></div>` : ''}
+    ${st ? `<div class="hint">${st}</div>` : ''}${doMes ? `<div class="hint">${doMes}</div>` : ''}
+    <div class="hint">O FGTS paga até ${pct}% ${base} por ${N} meses seguidos, com os depósitos que entram no período; o resto sai do bolso. O bolso liberado segue a regra do cenário (amortiza, divide ou vai para a carteira; no manual, vira aporte). <b>Por período, renovando</b>, o depósito de cada mês já paga a parcela, em vez de esperar até 24 meses pela janela rendendo 3% + TR. <b>Automático</b> liga só depois da última janela de amortização, quando o FGTS ficaria parado de vez.</div></div>`;
+}
+
 function dockHTML(p, mes, manual, cen, ctx) {
   const q = manual ? p?.novaQuitacao : resumo(ctx.proj[cen.id]).quitacao;
   const cel = (t, v, title = '') => `<div${title ? ` title="${esc(title)}"` : ''}><small>${t}</small><b>${v}</b></div>`;
@@ -89,7 +114,7 @@ export async function montarCenarios(el) {
   <article class="card">
     <div class="monthhero" id="mh"><button class="arrow" data-act="step" data-d="-1" aria-label="Mês anterior">${ic('left', 22)}</button>
       <div style="min-width:0"><div class="m">${rotuloMes(comp).replace('/', '<span style="color:var(--ink3)">/</span>')}</div><small>mês ${n} de ${total} · ${confirmado(comp) ? '<b style="color:var(--accent-text)">confirmado</b>' : 'pré-preenchido'}</small>
-        <small>${mes?.faixa ? `Faixa ${mes.faixa} · ` : ''}parcela ${R(mes?.encargo)} · saldo após ${R(mes?.saldoFinal)}</small></div>
+        <small>${mes?.faixa ? `Faixa ${mes.faixa} · ` : ''}parcela ${R(mes?.encargo)}${mes?.fgtsPrestacao > 0 ? ` (FGTS ${R(mes.fgtsPrestacao)})` : ''} · saldo após ${R(mes?.saldoFinal)}</small></div>
       <button class="arrow" data-act="step" data-d="1" aria-label="Próximo mês">${ic('right', 22)}</button></div>
     <div class="strip" id="strip">${strip}</div>
     <div class="legend"><span><i class="dot" style="background:var(--accent);border-radius:50%"></i>confirmado</span><span><i class="dot" style="border:2px solid var(--ink3);border-radius:50%;width:10px;height:10px"></i>pré-preenchido</span></div>
@@ -108,6 +133,7 @@ export async function montarCenarios(el) {
       <div class="field"><label for="e-fgts">Amortizar com FGTS ${bloq ? `<span class="tag" style="margin-left:6px">${ic('lock', 12)} travado</span>` : ''}</label><div class="inp ${bloq ? 'lock' : ''}"><span>R$</span><input id="e-fgts" inputmode="decimal" value="${nBR(vi.amortFGTS)}" ${bloq || !manual ? 'disabled' : ''}></div>
       <div class="hint">${!jan ? 'Sem saldo de FGTS informado neste cenário.' : bloq ? `O FGTS só pode amortizar a cada 24 meses.${jan.ultimoUso ? ` O último uso foi em <b>${rotuloMes(jan.ultimoUso)}</b>,` : ''} a próxima janela abre em <b>${jan.abreEm ? rotuloMes(jan.abreEm) : 'data fora do horizonte'}</b>${jan.saldoProjetado != null ? ` com saldo projetado de ${R(jan.saldoProjetado, 0)}` : ''}.` : `Janela aberta. Saldo projetado neste cenário: ${R(mes?.fgtsDisponivel, 0)}.${manual && mes?.fgtsDisponivel > 0 ? ` <button class="btn" style="min-height:36px;padding:0 12px;margin-top:6px" data-act="fgtstudo">Usar o saldo todo</button>` : ''}`}${estado.fgts?.aviso ? ` ${esc(estado.fgts.aviso)}` : ''}</div>
       ${manual ? `<div class="toggle" style="margin-top:4px"><span>Repetir o FGTS a cada 24 meses<small class="sub" style="display:block">Depois do 1º uso que você confirmar, cada janela usa o saldo acumulado</small></span><button class="sw" role="switch" aria-checked="${!!cen.usarFGTS}" aria-label="Repetir o FGTS a cada 24 meses" data-act="fgtsrep"></button></div>` : ''}</div>
+      ${fgtsPrestacaoHTML(cen, proj[cen.id], mes, comp, prem, estado)}
       <div class="field"><label for="e-resg">Resgatar da carteira para amortizar</label><div class="inp"><span>R$</span><input id="e-resg" inputmode="decimal" value="${nBR(vi.resgate)}" ${manual ? '' : 'disabled'}></div><div class="hint">Resgate sai do aporte mais antigo e não conta como custo novo.</div></div>
       <div class="cutbox"><div id="e-cut"></div>
         <div class="toggle" style="margin-top:4px"><span>Usar valor de corte</span><button class="sw" role="switch" aria-checked="${!!cen.usarValorDeCorte}" aria-label="Usar valor de corte" data-act="corte"></button></div></div>
@@ -127,7 +153,7 @@ export async function montarCenarios(el) {
     const tv = v.amortBolso + v.amortFGTS + v.resgate;
     $('#e-hint', el).innerHTML = `Sai do bolso ${R((refMes?.encargo ?? 0) + v.extra)} (parcela ${R(refMes?.encargo)} + extra) em todos os cenários. O que muda é só para onde vai.`;
     $('#e-cut', el).innerHTML = manual && p ? `<b>${R(tv)} → ${p.mesesReduzidos} ${p.mesesReduzidos === 1 ? 'mês' : 'meses'}</b>; corte ${p.valorDeCorte == null ? '—' : R(p.valorDeCorte)}; <b>${R(Math.max(0, p.sobraParaCarteira))}</b> vão para a carteira.` : manual ? '—' : 'Valores derivados da regra do cenário.';
-    $('#e-aporte', el).innerHTML = manual && p ? `Aporte do mês na carteira: <b>${R(Math.max(0, p.aporte))}</b> (orçamento menos parcela e amortização com o bolso).` : '';
+    $('#e-aporte', el).innerHTML = manual && p ? `Aporte do mês na carteira: <b>${R(Math.max(0, p.aporte))}</b> (orçamento menos parcela e amortização com o bolso${p.fgtsPrestacao > 0 ? `; o FGTS pagou ${R(p.fgtsPrestacao)} da parcela` : ''}).` : '';
     const er = $('#e-errs', el); er.hidden = !val.erros.length; er.innerHTML = val.erros.map(esc).join('<br>');
     $('#w-amort', el).classList.toggle('err', !!val.erros.length);
     $('#dk-pv').innerHTML = dockHTML(p, mes, manual, cen, ctx);
@@ -135,7 +161,10 @@ export async function montarCenarios(el) {
     $('#e-repetir', el).disabled = !val.ok || !opts;
   };
   el.oninput = ev => { if (ev.target.matches('#e-extra,#e-amort,#e-fgts,#e-resg')) atualizar(); };
-  el.onchange = ev => { if (ev.target.id === 'n-mod') $('#n-pctw', el).hidden = ev.target.value !== 'dividir'; };
+  el.onchange = ev => {
+    if (ev.target.id === 'n-mod') $('#n-pctw', el).hidden = ev.target.value !== 'dividir';
+    if (ev.target.id === 'e-fpini' && /^\d{4}-\d{2}$/.test(ev.target.value)) mudarFP({ ...cen.fgtsPrestacao, inicio: ev.target.value }).catch(e => toast(e.message, 6000));
+  };
   atualizar();
   $('#strip .cur', el)?.scrollIntoView({ inline: 'center', block: 'nearest' });
 
@@ -145,6 +174,8 @@ export async function montarCenarios(el) {
   el.onpointerup = e => { if (x0 == null) return; const dx = e.clientX - x0; x0 = null; if (Math.abs(dx) > 40) { comp = ate(somaMes(comp, dx < 0 ? 1 : -1), fim); rasc = null; remontar(); } };
 
   const remontar = () => { const y = window.scrollY; return montarCenarios(el).then(() => window.scrollTo(0, y)); };
+  // FGTS nas prestações: grava a opção do cenário (definirFGTSPrestacao recusa o que não vale) e redesenha
+  const mudarFP = async cfg => { await salvar('cenarios', definirFGTSPrestacao(estado, cen, cfg)); marcarPendentes([cen.id]); rasc = null; await remontar(); };
   const acao = async (b, a) => {
     const alvo = cen, id = b.dataset.id;
     if (a === 'step') { const c = somaMes(comp, +b.dataset.d); if (c >= estado.competencia && c <= fim) { comp = c; rasc = null; } }
@@ -174,6 +205,8 @@ export async function montarCenarios(el) {
     } else if (a === 'ndel') { await apagar('cenarios', alvo.id); selId = null; painel = null; toast(`"${alvo.nome}" excluído. As versões antigas continuam guardadas.`); }
     else if (a === 'corte') { await salvar('cenarios', { ...alvo, usarValorDeCorte: !alvo.usarValorDeCorte }); marcarPendentes([alvo.id]); }
     else if (a === 'fgtsrep') { await salvar('cenarios', { ...alvo, usarFGTS: !alvo.usarFGTS }); marcarPendentes([alvo.id]); }
+    else if (a === 'fp') { const v = b.dataset.v; return mudarFP(v === 'off' ? null : v === 'auto' ? { modo: 'auto' } : { modo: 'periodo', inicio: alvo.fgtsPrestacao?.inicio ?? comp, meses: FGTS_PRESTACAO_MESES, renovar: !!alvo.fgtsPrestacao?.renovar }); }
+    else if (a === 'fprenov') return mudarFP({ ...alvo.fgtsPrestacao, renovar: !alvo.fgtsPrestacao.renovar });
     else if (a === 'fgtstudo') { $('#e-fgts', el).value = nBR(Math.floor(mes.fgtsDisponivel * 100) / 100); atualizar(); return; }
     else if (a === 'confirm' || a === 'repetir') {
       const v = vals(), fimRep = a === 'repetir' ? $('#e-rep', el).value : comp, comps = [];

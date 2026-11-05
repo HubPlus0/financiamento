@@ -5,3 +5,11 @@ ref/
 node_modules/
 .claude/
 docs/
+# dados pessoais: backups e exportações do app, extratos e planilhas (ver CLAUDE.md)
+financiamento-*.json
+*.export.json
+*.pdf
+*.csv
+*.xlsx
+*.ofx
+.env*

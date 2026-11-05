@@ -13,7 +13,7 @@
 //   D.real / D.plan (lista) -> serie[] { competencia, rotulo, real, faixa, amortizacao(A), juros(J), tr(TR), seguros(seg), taxa, encargo(enc), saldo(S), eventos(ev) }
 //   statusChart -> serieSaldo { reais, plano, referencia, marcos }; fgtsWin -> janelaFGTS
 //  Comparativo (por cenario em painelComparativo(...).cenarios): pat -> patrimonio; Vl,S,cart,fg -> composicao.{imovelLiquido,divida,carteira,fgts};
-//   bolso -> custoBolso; fgUsed -> fgtsUsado; quit/quitLab -> quitacao.rotulo; jur,tr -> jurosPagos, trPaga;
+//   bolso -> custoBolso; fgUsed -> fgtsUsado (amortizações + prestações; fgtsPrestacoes separado); quit/quitLab -> quitacao.rotulo; jur,tr -> jurosPagos, trPaga;
 //   econJ, econT, anosMenos -> economizado.{juros, tr, anos}; infl -> fator; best/tie -> melhor (null em "hoje"); marcos de faixa -> marcos[].mesesAntecipados
 //  Gráficos (seriesGraficos): donut -> rosca; D.yearly[k].S -> saldoPorAno; .A/.J/.TR/.seg -> composicaoParcela; .cart + D.cross -> saldoXCarteira (cruzamento)
 // Sem dado no Artifact: nada faltou; o texto "sem amortização extra seria em fev/2029" sai de marcos.referencia.
@@ -66,6 +66,7 @@ const eventosProj = m => [
   ...(m.amortBolso > 0 ? [{ tipo: 'amortizacao', origem: 'bolso', valor: m.amortBolso }] : []),
   ...(m.amortFGTS > 0 ? [{ tipo: 'amortizacao', origem: 'fgts', valor: m.amortFGTS }] : []),
   ...(m.resgate > 0 ? [{ tipo: 'amortizacao', origem: 'resgate', valor: m.resgate }] : []),
+  ...(m.fgtsPrestacao > 0 ? [{ tipo: 'fgts-prestacao', valor: m.fgtsPrestacao, mes: m.fgtsPrestacaoMes }] : []),
   ...(m.fgtsSaldo != null && m.fgtsLivreEm === m.competencia ? [{ tipo: 'janela-fgts', saldo: m.fgtsDisponivel }] : []),
 ];
 const linhaProj = m => ({ competencia: m.competencia, rotulo: rotuloMes(m.competencia), real: false, faixa: m.faixa, amortizacao: m.amortizacao, juros: m.juros,
@@ -75,7 +76,8 @@ function linhasReais(P) {
   const ms = P.estado.linhaReal.meses;
   return ms.map((m, k) => {
     const prox = ms[k + 1], r = P.real[k];
-    const eventos = P.extras.filter(e => e.data >= m.vencimento && (!prox || e.data < prox.vencimento)).map(e => ({ tipo: 'amortizacao', origem: e.origem, valor: e.valor }));
+    const eventos = [...(m.fgtsPrestacao > 0 ? [{ tipo: 'fgts-prestacao', valor: m.fgtsPrestacao }] : []),
+      ...P.extras.filter(e => e.data >= m.vencimento && (!prox || e.data < prox.vencimento)).map(e => ({ tipo: 'amortizacao', origem: e.origem, valor: e.valor }))];
     return { competencia: m.competencia, rotulo: rotuloMes(m.competencia), real: true, faixa: m.calc.faixa, amortizacao: m.calc.amortizacao, juros: m.calc.juros,
       tr: m.calc.saldoCorrigido - m.saldoAnt, seguros: m.calc.mip + m.calc.dfi, taxa: m.calc.taxa, encargo: m.encargo, saldo: r.saldoFinal, eventos };
   });
@@ -160,12 +162,13 @@ export function painelStatus(dados, { contra = 'anterior' } = {}) {
     saldoAtual: estado.saldo, ultimaParcela: { ...marca(ms.at(-1).competencia), vencimento: ms.at(-1).vencimento },
     prazoRestante: estado.prazo, quitacao: marca(resumo(pl).quitacao), quitacaoPlano: marca(resumo(pl).quitacao), quitacaoReferencia: marca(resumo(rf).quitacao),
     proximaParcela: { ...marca(prox.competencia), vencimento: dataMes(prox.competencia, dia), amortizacao: prox.amortizacao, juros: prox.juros, tr, aj: prox.pmt,
-      mip: prox.mip, dfi: prox.dfi, seguros: prox.mip + prox.dfi, taxa: prox.taxa, encargo: prox.encargo, faixa: prox.faixa },
+      mip: prox.mip, dfi: prox.dfi, seguros: prox.mip + prox.dfi, taxa: prox.taxa, encargo: prox.encargo, faixa: prox.faixa,
+      fgtsPrestacao: prox.fgtsPrestacao ?? 0, doBolso: prox.encargo - (prox.fgtsPrestacao ?? 0), fgtsPrestacaoMes: prox.fgtsPrestacaoMes ?? null },
     totalPago: { juros: g.juros, trPaga: g.trPaga, seguros: g.seguros, taxas: g.taxas, principalDevolvido: g.principalDevolvido, documentacao: g.documentacao,
       entrada: g.entradaDinheiro, entradaFGTS: g.entradaFGTS, parcelasEExtras: g.totalPago, custos: g.custos, total: g.total },
     gastoPorOrigem: g.porOrigem,
-    detalheOrigem: { bolso: { entrada: g.entradaDinheiro, documentacao: g.documentacao, parcelas: soma(P.real, m => m.encargo), extras: extraBolso },
-      fgts: { entrada: g.entradaFGTS, extras: extraFGTS } },
+    detalheOrigem: { bolso: { entrada: g.entradaDinheiro, documentacao: g.documentacao, parcelas: soma(P.real, m => m.encargo) - g.fgtsPrestacao, extras: extraBolso },
+      fgts: { entrada: g.entradaFGTS, extras: extraFGTS, prestacoes: g.fgtsPrestacao } },
     trNoSaldo: g.trNoSaldo, composicao,
     parcela: { original: { ...marca(ms[k2].competencia), encargo: encargoDe(k2) }, atual: { ...marca(prox.competencia), encargo: prox.encargo } },
     marcos: { ...marcos, passaTR: { plano: passaTR(lPlano), referencia: passaTR(lRef) } },
@@ -204,21 +207,22 @@ export function painelComparativo(dados, horizonte = 10, deflacionar = false) {
   const mRef = marcosDeMs(refMs);
   const cenarios = P.grupo.map(c => {
     const ms = P.proj[c.id], prem = P.pp[c.premissasId], ehRef = c === P.ref;
-    let imovel, divida, carteira, fgts, m = null, custoBolso = 0, fgtsUsado = 0;
+    let imovel, divida, carteira, fgts, m = null, custoBolso = 0, fgtsUsado = 0, fgtsPrestacoes = 0;
     if (comp == null) { // hoje: todos partem do real
       const dt = P.hoje;
       imovel = vendaLiquida(cfg, prem, dt); divida = P.estado.saldo; carteira = 0; fgts = P.estado.fgts?.saldo ?? 0;
     } else {
       m = ms.find(x => x.competencia === comp);
       imovel = vendaLiquida(cfg, prem, dataMes(comp, dia)); divida = m.saldoFinal; carteira = m.carteiraLiquida ?? 0; fgts = m.fgtsSaldo ?? 0;
-      custoBolso = m.custoBolso; fgtsUsado = soma(ms.filter(x => x.competencia <= comp), x => x.amortFGTS);
+      const ate = ms.filter(x => x.competencia <= comp);
+      custoBolso = m.custoBolso; fgtsPrestacoes = soma(ate, x => x.fgtsPrestacao ?? 0); fgtsUsado = soma(ate, x => x.amortFGTS) + fgtsPrestacoes;
     }
     const pat = patrimonio(cfg, prem, comp == null ? P.hoje : dataMes(comp, dia), { saldo: divida, carteira, fgts });
     const gt = gastos(cfg, [...P.real, ...ativos(ms)]), ec = economizado(ms, refMs, prem), mc = marcosDeMs(ms);
     return { id: c.id, nome: c.nome, regra: c.regra, referencia: ehRef, planoAtivo: !!c.planoAtivo,
       patrimonio: d(pat), composicao: { imovelLiquido: d(imovel), divida: d(divida), carteira: d(carteira), fgts: d(fgts) },
       saldoDevedor: d(divida), carteira: d(carteira), quitacao: marca(resumo(ms).quitacao),
-      custoBolso: d(custoBolso), fgtsUsado: d(fgtsUsado), jurosPagos: d(gt.juros), trPaga: d(gt.trPaga),
+      custoBolso: d(custoBolso), fgtsUsado: d(fgtsUsado), fgtsPrestacoes: d(fgtsPrestacoes), jurosPagos: d(gt.juros), trPaga: d(gt.trPaga),
       economizado: ehRef ? null : { juros: d(ec.juros), tr: d(ec.tr), anos: ec.anos, meses: ec.meses },
       marcos: [2, 3].map(fx => { const a = mc.find(x => x.faixa === fx)?.competencia ?? null, b = mRef.find(x => x.faixa === fx)?.competencia ?? null;
         return { faixa: fx, ...marca(a), referencia: marca(b), mesesAntecipados: a && b ? mesesEntre(a, b) : null }; }) };

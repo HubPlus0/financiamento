@@ -47,7 +47,7 @@ export function linhaDoReal(linhaReal, extras) {
     const xs = extras.filter(e => e.data >= m.vencimento && (!prox || e.data < prox.vencimento));
     const fgts = soma(xs.filter(e => e.origem === 'fgts'), e => e.valor);
     return { competencia: m.competencia, encargo: m.encargo, juros: m.calc.juros, mip: m.calc.mip, dfi: m.calc.dfi, taxa: m.calc.taxa,
-      amortFGTS: fgts, amortBolso: soma(xs, e => e.valor) - fgts, resgate: 0,
+      amortFGTS: fgts, amortBolso: soma(xs, e => e.valor) - fgts, resgate: 0, fgtsPrestacao: m.fgtsPrestacao ?? 0,
       saldoInicial: m.saldoAnt, saldoFinal: prox ? prox.saldoAnt : linhaReal.estado.saldo };
   });
 }
@@ -62,20 +62,21 @@ const trTotal = ms => (ms.length
  * Gastos de um período (meses de `linhaDoReal` e/ou projetados, em sequência). Conservação (exata, por construção da TR):
  *   juros + trPaga + seguros + taxas + principalDevolvido = totalPago, com totalPago = Σ encargos + Σ amortizações extras
  *   (bolso + FGTS + resgate). Saldo acima do inicial = TR (e juro capitalizado da 1ª parcela) ainda não coberta: trNoSaldo.
- * Por origem: FGTS = entrada com FGTS + amortizações com FGTS; bolso = o resto (entrada, documentação, parcelas, extras).
+ * Por origem: FGTS = entrada com FGTS + amortizações com FGTS + parte das parcelas paga com FGTS (`fgtsPrestacao`, que já
+ * está dentro do encargo); bolso = o resto (entrada, documentação, parcelas menos essa parte, extras).
  * `cfg` traz inicial.{entradaDinheiro, entradaFGTS, documentacao}.
  */
 export function gastos(cfg, meses) {
   const juros = soma(meses, m => m.juros), seguros = soma(meses, m => m.mip + m.dfi), taxas = soma(meses, m => m.taxa);
-  const amortFGTS = soma(meses, m => m.amortFGTS), totalPago = soma(meses, pago);
+  const amortFGTS = soma(meses, m => m.amortFGTS), fgtsPrestacao = soma(meses, m => m.fgtsPrestacao ?? 0), totalPago = soma(meses, pago);
   const ini = meses[0]?.saldoInicial ?? 0, fim = meses.at(-1)?.saldoFinal ?? ini;
   const principalDevolvido = Math.max(0, ini - fim), trNoSaldo = Math.max(0, fim - ini);
   const trPaga = trTotal(meses) - trNoSaldo;
   const entradaDinheiro = cfg.inicial.entradaDinheiro ?? 0, entradaFGTS = cfg.inicial.entradaFGTS ?? 0, documentacao = cfg.inicial.documentacao ?? 0;
   const total = totalPago + entradaDinheiro + entradaFGTS + documentacao;
   return { juros, trPaga, trNoSaldo, seguros, taxas, principalDevolvido, documentacao, entradaDinheiro, entradaFGTS,
-    totalPago, custos: juros + trPaga + seguros + taxas + documentacao, total,
-    porOrigem: { bolso: total - entradaFGTS - amortFGTS, fgts: entradaFGTS + amortFGTS },
+    totalPago, custos: juros + trPaga + seguros + taxas + documentacao, total, fgtsPrestacao,
+    porOrigem: { bolso: total - entradaFGTS - amortFGTS - fgtsPrestacao, fgts: entradaFGTS + amortFGTS + fgtsPrestacao },
     diferenca: juros + trPaga + seguros + taxas + principalDevolvido - totalPago };
 }
 
