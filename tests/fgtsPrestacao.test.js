@@ -196,6 +196,14 @@ const perto = (a, b, tol, msg) => assert(Math.abs(a - b) <= tol, `${msg}: ${a} v
   assert.strictEqual(I.proximoUsoFGTS(fr, 'reiniciaNoFim'), '2032-04-10');
   assert(I.podeUsarFGTS(fr, '2032-03-01') && !I.podeUsarFGTS(fr, '2032-03-01', 'reiniciaNoFim'));
 
+  // ---- amortização com FGTS confirmada acima do que sobrou depois das prestações: limita ao saldo, nunca negativo
+  const esgotado = est({ saldo: 2000, livreEm: '2030-01', deposito: 500, aviso: null });
+  const sobra = S.projetar(esgotado, man(periodo(), { meses: { '2030-03': { amortFGTS: 5000, confirmado: true } } }), null, prem);
+  const mesUso = sobra.find(m => m.competencia === '2030-03');
+  assert(mesUso.amortFGTS > 0 && mesUso.amortFGTS < 5000, `amortFGTS limitado: ${mesUso.amortFGTS}`);
+  assert(sobra.every(m => m.fgtsSaldo >= -1e-9), 'saldo do FGTS nunca negativo');
+  assert(!S.validarMes(esgotado, man(periodo()), null, prem, '2030-03', { amortFGTS: 5000 }).ok, 'validar continua recusando');
+
   // ---- backup ida e volta com tudo o que é novo
   const stores = {
     config: [{ id: 'config', criadoEm: 'x', contrato: { valorFinanciado: 1000 }, inicial: {} }],

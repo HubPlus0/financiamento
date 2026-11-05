@@ -196,7 +196,8 @@ export function projetar(estado, cenario, orcamento, premissas, { base, ate } = 
       const pl = planoDoMes(cenario, comp, extraDe(orcamento, comp) + fgtsPrestacao);
       resto = saldoAposParcela; proxPmt = pmtMes;
       const fgtsDigitado = pl.amortFGTS ?? 0;
-      ex.amortFGTS = Math.min(fgtsAuto && !(fgtsDigitado > 0) ? fgDisp : fgtsDigitado, resto); resto -= ex.amortFGTS;
+      // nunca além do saldo do FGTS: um valor confirmado antes das prestações consumirem o FGTS deixaria o saldo negativo
+      ex.amortFGTS = Math.min(fgtsAuto && !(fgtsDigitado > 0) ? fgDisp : fgtsDigitado, resto, fg ? fg.saldo : Infinity); resto -= ex.amortFGTS;
       if (!auto && cenario.usarFGTS && fgtsDigitado > 0) fgtsAuto = true;
       ex.resgate = Math.min(pl.resgate ?? 0, resto, disp ?? Infinity); resto -= ex.resgate;
       let b = Math.min(pl.amortBolso ?? 0, resto);
