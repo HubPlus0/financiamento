@@ -44,7 +44,7 @@ export async function montarLancar(el, config) {
   const prem = premissas.find(p => p.id === 'padrao') ?? premissas[0];
   const linha = replayHistorico(config, parcelas, extras, prem);
   const venc = proximoVencimento(parcelas, config) ?? '';
-  const proxFGTS = proximoUsoFGTS(fgts), saldoFGTS = saldoFGTSReal(fgts);
+  const janela = prem.fgtsPrestacaoJanela ?? 'naoAfeta', proxFGTS = proximoUsoFGTS(fgts, janela), saldoFGTS = saldoFGTSReal(fgts);
   const ultFGTS = fgts.filter(m => m.tipo === 'uso-amortizacao').map(m => m.data).sort().pop();
   const prev0 = venc ? previsao(cenarios, versoes, venc.slice(0, 7)) : {};
   const e = linha.estado;
@@ -58,6 +58,7 @@ export async function montarLancar(el, config) {
     <details class="det"><summary><span>Detalhar <span class="muted" style="font-weight:500">· opcional</span></span><span class="chev">${ic('chev', 20)}</span></summary>
       <div class="detbody">
         ${data('vencimento', 'Vencimento', venc)}${data('dataPagamento', 'Data do pagamento', '')}
+        <div class="field" style="grid-column:1/-1"><label for="f-fgtsPrestacao">Parte paga com FGTS</label><div class="inp sm"><span>R$</span><input id="f-fgtsPrestacao" name="fgtsPrestacao" inputmode="decimal" placeholder="0,00" autocomplete="off"></div><div class="hint">Se o FGTS pagou parte desta parcela (até ${Math.round((prem.fgtsPrestacaoPct ?? 0.8) * 100)}%). O valor pago acima é a parcela inteira; o app desconta essa parte do saldo do FGTS.</div></div>
         ${campo('devido', 'Valor devido')}${campo('amortizacao', 'Amortização')}${campo('juros', 'Juros')}${campo('correcao', 'Correção (TR)')}${campo('mip', 'MIP')}${campo('dfi', 'DFI')}${campo('taxa', 'Taxa')}
         <div class="hint" style="grid-column:1/-1">Se digitar a quebra da Caixa e ela diferir do cálculo em mais de R$ 0,05, o valor da Caixa vale e o app avisa.</div>
       </div></details>
@@ -108,6 +109,7 @@ export async function montarLancar(el, config) {
     if (!r) return toast('Informe o valor pago e o saldo depois do pagamento.', 4500);
     if (parcelas.some(p => p.vencimento === r.registro.vencimento)) return toast('Esse vencimento já foi lançado.', 4500);
     await salvar('parcelasReais', r.registro);
+    if (r.registro.fgtsPrestacao > 0) await salvar('fgtsReal', { data: r.registro.vencimento, tipo: 'uso-prestacao', competencia: r.registro.competencia, valor: r.registro.fgtsPrestacao });
     const n = await aoMudarReal();
     toast(`Parcela de ${rotuloMes(r.registro.competencia)} lançada. ${n} ${n === 1 ? 'cenário ganhou' : 'cenários ganharam'} uma versão nova.`, 4500);
   });
@@ -116,7 +118,7 @@ export async function montarLancar(el, config) {
   const atualizarX = () => {
     const x = lerX(), out = $('#lx-out', el), av = [];
     const aviso = $('#lx-fgts', el);
-    const semFGTS = x.origem === 'fgts' && x.data && !podeUsarFGTS(fgts, x.data);
+    const semFGTS = x.origem === 'fgts' && x.data && !podeUsarFGTS(fgts, x.data, janela);
     aviso.hidden = !semFGTS;
     if (semFGTS) aviso.textContent = `${ultFGTS ? `Último uso do FGTS foi em ${dataBR(ultFGTS)}. ` : ''}A janela abre em ${dataBR(proxFGTS)}. O app só avisa e deixa lançar, porque é o real.`;
     if (x.valor == null || !x.data) return (out.innerHTML = '');

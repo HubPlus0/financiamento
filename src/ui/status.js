@@ -10,7 +10,8 @@ const mk = (lab, cl) => `<span style="display:flex;align-items:center;gap:6px"><
 
 const evHTML = e => (e.tipo === 'amortizacao'
   ? `<span class="ev ${e.origem === 'fgts' ? 'fgts' : 'am'}">${ic('amort', 13)}${e.origem === 'resgate' ? 'Resgate da carteira' : 'Amortização' + (e.origem === 'fgts' ? ' FGTS' : '')} ${R(e.valor)}</span>`
-  : e.tipo === 'janela-fgts' ? `<span class="ev jan">${ic('cal', 13)}Janela do FGTS abre${e.saldo != null ? ' · ' + R(e.saldo, 0) : ''}</span>` : '');
+  : e.tipo === 'janela-fgts' ? `<span class="ev jan">${ic('cal', 13)}Janela do FGTS abre${e.saldo != null ? ' · ' + R(e.saldo, 0) : ''}</span>`
+  : e.tipo === 'fgts-prestacao' ? `<span class="ev fgts">FGTS paga ${R(e.valor)} da parcela</span>` : '');
 
 function rowHTML(r) {
   const a = Math.max(0, r.amortizacao), tr = Math.max(0, r.tr), j = Math.max(0, r.juros), t = (a + tr + j) || 1;
@@ -115,6 +116,7 @@ export function statusView(d, p) {
       <dt>${mk('Juros', 'var(--s1)')}</dt><dd>${R(pr.juros)}</dd>
       <dt>${mk('Seguros e taxa', 'var(--s4)')}</dt><dd>${R(pr.seguros + pr.taxa)}</dd>
     </dl>
+    ${pr.fgtsPrestacao > 0 ? `<div class="sub">O FGTS paga <b>${R(pr.fgtsPrestacao)}</b> (mês ${pr.fgtsPrestacaoMes} de 12 no plano ativo); do bolso sai <b>${R(pr.doBolso)}</b>.</div>` : ''}
     <div class="cutbox"${f === 1 ? ' style="background:color-mix(in srgb,var(--f1) 10%,var(--surface))"' : ''}>A TR do mês soma <b>${R(pr.tr)}</b> ao saldo e a amortização é ${R(pr.amortizacao)}. ${f === 1 ? 'Por isso o saldo ainda sobe com a parcela paga.' : FX[f][2] + '.'}</div>
     <div class="sub">Parcela original ${R(p.parcela.original.encargo)} (${p.parcela.original.rotulo}) → agora ${R(p.parcela.atual.encargo)}</div>
   </article>
@@ -128,7 +130,7 @@ export function statusView(d, p) {
     <div class="kicker">Total pago: bolso × FGTS</div>
     <div class="bar" style="height:16px"><i style="width:${G > 0 ? p.gastoPorOrigem.bolso / G * 100 : 0}%;background:var(--accent)"></i><i style="width:${G > 0 ? p.gastoPorOrigem.fgts / G * 100 : 0}%;background:var(--s7)"></i></div>
     <div class="grid2"><div class="kv"><small style="display:flex;align-items:center;gap:6px"><i class="dot" style="background:var(--accent)"></i>Do bolso</small><b>${R(p.gastoPorOrigem.bolso)}</b><small>${PC(G > 0 ? p.gastoPorOrigem.bolso / G * 100 : 0, 1)}</small></div>
-    <div class="kv"><small style="display:flex;align-items:center;gap:6px"><i class="dot" style="background:var(--s7)"></i>Do FGTS</small><b>${R(p.gastoPorOrigem.fgts)}</b><small>entrada ${R(p.detalheOrigem.fgts.entrada, 0)} + amortizações ${R(p.detalheOrigem.fgts.extras, 0)}</small></div></div>
+    <div class="kv"><small style="display:flex;align-items:center;gap:6px"><i class="dot" style="background:var(--s7)"></i>Do FGTS</small><b>${R(p.gastoPorOrigem.fgts)}</b><small>entrada ${R(p.detalheOrigem.fgts.entrada, 0)} + amortizações ${R(p.detalheOrigem.fgts.extras, 0)}${p.detalheOrigem.fgts.prestacoes > 0 ? ` + parcelas ${R(p.detalheOrigem.fgts.prestacoes, 0)}` : ''}</small></div></div>
   </article>
   ${divergenciaHTML(p)}
   ${extrasHTML(p, d)}

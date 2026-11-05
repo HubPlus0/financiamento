@@ -63,7 +63,7 @@ export function comparativoView(d, pc, sg) {
   const eco = (r, f) => (r.economizado ? f(r.economizado) : '—');
   const table = `<div class="tablewrap" tabindex="0" aria-label="Tabela comparativa"><table><thead><tr><th>${hzl}</th>${hdr}</tr></thead><tbody>
    ${sec('Patrimônio')}${line('Patrimônio', r => '<b>' + R(r.patrimonio, 0) + '</b>')}${line('Imóvel líquido', r => R(r.composicao.imovelLiquido, 0))}${line('− Dívida', r => '−' + R(r.composicao.divida, 0), r => r.composicao.divida > 0)}${line('Carteira (líq. IR)', r => R(r.composicao.carteira, 0))}${line('FGTS', r => R(r.composicao.fgts, 0))}
-   ${sec('Custo e uso')}${line('Custo do bolso', r => R(r.custoBolso, 0))}${line('FGTS usado', r => R(r.fgtsUsado, 0))}${line('Quitação', rot)}
+   ${sec('Custo e uso')}${line('Custo do bolso', r => R(r.custoBolso, 0))}${line('FGTS usado', r => R(r.fgtsUsado, 0))}${todos.some(r => r.fgtsPrestacoes > 0) ? line('· nas prestações', r => R(r.fgtsPrestacoes, 0)) : ''}${line('Quitação', rot)}
    ${sec('Até quitar')}${line('Juros pagos', r => R(r.jurosPagos, 0))}${line('TR paga', r => R(r.trPaga, 0))}${line('Juros economizados', r => eco(r, e => R(e.juros, 0)))}${line('TR economizada', r => eco(r, e => R(e.tr, 0)))}${line('Anos a menos', r => eco(r, e => e.anos.toLocaleString('pt-BR', { maximumFractionDigits: 1 })))}
   </tbody></table></div>`;
   const g = graficos(d, sg, st.chart, st.infl), selNome = esc(d.grupo.find(c => c.id === st.chart).nome);
