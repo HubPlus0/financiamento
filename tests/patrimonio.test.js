@@ -65,7 +65,7 @@ const perto = (a, b, tol, msg) => assert(Math.abs(a - b) <= tol, `${msg}: ${a} v
   // custoBolso igual entre os cenários com a carteira ativa; a carteira só cresce no "investir tudo"
   const len = g.ref.length;
   for (const k of [12, 60, len]) {
-    const cs = lista.map(c => g[c.id][k - 1].custoBolso);
+    const cs = lista.filter(c => c.regra !== 'referencia').map(c => g[c.id][k - 1].custoBolso); // a referência não investe o extra
     perto(Math.max(...cs), Math.min(...cs), 0.01, `custoBolso no mês ${k}`);
   }
   assert(g.inv.every(m => m.carteiraBruta > 0 && m.carteiraLiquida <= m.carteiraBruta + 1e-9));

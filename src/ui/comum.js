@@ -43,7 +43,7 @@ export const anosEMeses = n => `${Math.floor(n / 12)} anos e ${n % 12} ${n % 12 
 
 // ---- regras de cenário em texto
 export const nomeRegra = r => (r === 'manual' ? 'manual' : r === 'referencia' ? 'referência' : r === 'amortizarTudo' ? 'amortizar tudo' : r === 'investirTudo' ? 'investir tudo' : `dividir ${Math.round(r.dividir * 100)}%`);
-export const descRegra = r => (r === 'referencia' ? 'Referência fixa: parcelas como assinadas' : r === 'amortizarTudo' ? 'Todo o extra amortiza o prazo'
+export const descRegra = r => (r === 'referencia' ? 'Referência fixa: só as parcelas como assinadas, sem extra' : r === 'amortizarTudo' ? 'Todo o extra amortiza o prazo'
   : r === 'investirTudo' ? 'O extra vai inteiro para a carteira' : r === 'manual' ? 'Meses definidos por você, um a um'
   : `${Math.round(r.dividir * 100)}% do extra amortiza, o resto vai para a carteira`);
 const CORES = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s5)', 'var(--s7)', 'var(--s6)', 'var(--s4)'];

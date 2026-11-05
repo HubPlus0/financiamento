@@ -228,7 +228,8 @@ export function projetar(estado, cenario, orcamento, premissas, { base, ate } = 
     if (fgtsPrestacao > 0) eventos.push('fgts-prestacao');
     // do bolso sai só a parte da parcela que o FGTS não pagou: com o mesmo orçamento, o aporte sobe
     const doBolso = encargo - fgtsPrestacao;
-    const orc = orcamento || base ? (base ? base[comp] ?? 0 : encargo) + extraDe(orcamento, comp) : null;
+    // referência = não fazer nada: paga só a parcela; o extra do orçamento não sai do bolso nem vira aporte
+    const orc = orcamento || base ? (base ? base[comp] ?? 0 : encargo) + (cenario.regra === 'referencia' ? 0 : extraDe(orcamento, comp)) : null;
     const aporte = orc == null ? null : orc - doBolso - ex.amortBolso;
     custo += doBolso + ex.amortBolso + (aporte ?? 0);
     if (lotes) { // resgate para amortizar e aporte negativo saem FIFO; aporte positivo vira lote novo
@@ -370,6 +371,7 @@ export const baseReferencia = (estado, premissas) =>
 /**
  * Projeta o grupo no mesmo orçamento: { [cenarioId]: meses }. Orçamento = encargo da referência + extra; todos vão até
  * a quitação mais tardia (quem quita antes segue com saldo 0 e aporte = orçamento), então o custo do bolso é igual.
+ * A referência é o "não fazer nada": paga só as parcelas, sem o extra (custo do bolso menor, carteira zero).
  */
 export function projetarGrupo(estado, cenarios, orcamento, premissasPorId) {
   const pr = c => premissasPorId[c.premissasId];

@@ -23,21 +23,21 @@ const perto = (a, b, tol, msg) => assert(Math.abs(a - b) <= tol, `${msg}: ${a} v
   };
   const lista = Object.values(grupo), pp = { p: prem };
 
-  // custoBolso igual em todos os cenários, em qualquer horizonte
-  const rodar = extra => S.projetarGrupo(estado, lista, orcamentoCom(extra), pp);
+  // custoBolso igual em todos os cenários (menos a referência), em qualquer horizonte
+  const rodar = extra => S.projetarGrupo(estado, lista, orcamentoCom(extra), pp), meus = lista.filter(c => c.regra !== 'referencia');
   for (const extra of [700, 3000]) {
     const g = rodar(extra), len = g.ref.length;
     assert(lista.every(c => g[c.id].length === len), 'mesmo horizonte');
     for (const k of [12, 60, 120, len]) {
-      const cs = lista.map(c => g[c.id][k - 1].custoBolso);
+      const cs = meus.map(c => g[c.id][k - 1].custoBolso);
       perto(Math.max(...cs), Math.min(...cs), 0.01, `custoBolso no mês ${k} (extra ${extra})`);
     }
-    lista.forEach(c => perto(S.resumo(g[c.id]).custoBolso, S.resumo(g.ref).custoBolso, 0.01, 'resumo.custoBolso'));
+    meus.forEach(c => perto(S.resumo(g[c.id]).custoBolso, S.resumo(g.tudo).custoBolso, 0.01, 'resumo.custoBolso'));
     lista.forEach(c => assert(g[c.id].every(m => m.aporte >= S.APORTE_MIN), `aporte de ${c.id} não passa de -0,10`));
-    // referência: sem extras e sem FGTS; o extra todo vai para o aporte
-    assert(g.ref.every(m => m.amortBolso === 0 && m.amortFGTS === 0));
-    perto(g.ref[0].aporte, extra, 1e-9, 'aporte da referência');
-    perto(g.ref[0].orcamento, g.ref[0].encargo + extra, 1e-9, 'orçamento = encargo da referência + extra');
+    // referência = não fazer nada: sem extras, sem FGTS e sem investir o extra; do bolso sai só a parcela
+    assert(g.ref.every(m => m.amortBolso === 0 && m.amortFGTS === 0 && m.aporte === 0 && m.carteiraLiquida === 0));
+    perto(S.resumo(g.ref).custoBolso, g.ref.reduce((s, m) => s + m.encargo, 0), 0.01, 'custo da referência = parcelas');
+    perto(g.tudo[0].orcamento, g.ref[0].encargo + extra, 1e-9, 'orçamento = encargo da referência + extra');
   }
 
   // quem quita antes continua até a quitação mais tardia, com aporte = orçamento

@@ -195,14 +195,20 @@ const anosDe = (P, h) => {
 
 /**
  * Comparativo no horizonte `horizonte` ('hoje' | 5 | 10 | 15 | 'quitacao').
- * `deflacionar`: true = valores a preços de hoje (o "Sem inflação" do Artifact); divide TODO valor em R$ por `fator` = (1+IPCA)^anos,
- * o mesmo para a tela toda (inclusive juros, TR e economizado). Sem deflacionar, `fator` vem 1 e `fatorIPCA` mostra o do horizonte.
+ * `deflacionar`: true = valores a preços de hoje ("Em reais de hoje" na tela). Saldos no horizonte (patrimônio, dívida,
+ * carteira, FGTS) dividem por `fator` = (1+IPCA)^anos; fluxos (custo do bolso, FGTS usado, juros, TR, economizado) dividem
+ * cada mês projetado pelo fator da data dele (meses reais ficam como foram pagos). Sem deflacionar, `fator` vem 1 e
+ * `fatorIPCA` mostra o do horizonte.
  */
 export function painelComparativo(dados, horizonte = 10, deflacionar = false) {
   const P = preparar(dados);
   if (!P) return null;
-  const { anos, comp } = anosDe(P, horizonte), cfg = P.estado.cfg, dia = cfg.contrato.diaVencimento ?? 5;
-  const fatorIPCA = deflator(P.premPlano.ipcaAA ?? 0, anos), f = deflacionar ? fatorIPCA : 1, d = x => x / f;
+  const { anos, comp } = anosDe(P, horizonte), cfg = P.estado.cfg, dia = cfg.contrato.diaVencimento ?? 5, ipca = P.premPlano.ipcaAA ?? 0;
+  const fatorIPCA = deflator(ipca, anos), f = deflacionar ? fatorIPCA : 1, d = x => x / f;
+  const fluxo = (ms, g) => soma(ms, m => g(m) / (deflacionar ? deflator(ipca, Math.max(0, mesesEntre(P.estado.competencia, m.competencia)) / 12) : 1));
+  const corr = (ms, g) => fluxo(ms, g) - soma(ms, g); // nominal → a preços de hoje (0 sem deflacionar)
+  const J = m => m.juros, TR = m => m.saldoCorrigido - m.saldoInicial;
+  const bolsoMes = m => m.encargo - (m.fgtsPrestacao ?? 0) + m.amortBolso + (m.aporte ?? 0); // o que projetar soma em custoBolso
   const refMs = P.proj[P.ref.id], reais = faixasReais(P);
   const marcosDeMs = ms => marcosDe([...reais, ...ativos(ms)]);
   const mRef = marcosDeMs(refMs);
@@ -216,15 +222,16 @@ export function painelComparativo(dados, horizonte = 10, deflacionar = false) {
       m = ms.find(x => x.competencia === comp);
       imovel = vendaLiquida(cfg, prem, dataMes(comp, dia)); divida = m.saldoFinal; carteira = m.carteiraLiquida ?? 0; fgts = (m.fgtsSaldo ?? 0) + (m.fgtsCredito ?? 0);
       const ate = ms.filter(x => x.competencia <= comp);
-      custoBolso = m.custoBolso; fgtsPrestacoes = soma(ate, x => x.fgtsPrestacao ?? 0); fgtsUsado = soma(ate, x => x.amortFGTS) + fgtsPrestacoes;
+      custoBolso = fluxo(ate, bolsoMes); fgtsPrestacoes = fluxo(ate, x => x.fgtsPrestacao ?? 0); fgtsUsado = fluxo(ate, x => x.amortFGTS) + fgtsPrestacoes;
     }
     const pat = patrimonio(cfg, prem, comp == null ? P.hoje : dataMes(comp, dia), { saldo: divida, carteira, fgts });
-    const gt = gastos(cfg, [...P.real, ...ativos(ms)]), ec = economizado(ms, refMs, prem), mc = marcosDeMs(ms);
+    const at = ativos(ms), gt = gastos(cfg, [...P.real, ...at]), ec = economizado(ms, refMs, prem), mc = marcosDeMs(ms);
     return { id: c.id, nome: c.nome, regra: c.regra, referencia: ehRef, planoAtivo: !!c.planoAtivo,
       patrimonio: d(pat), composicao: { imovelLiquido: d(imovel), divida: d(divida), carteira: d(carteira), fgts: d(fgts) },
       saldoDevedor: d(divida), carteira: d(carteira), quitacao: marca(resumo(ms).quitacao),
-      custoBolso: d(custoBolso), fgtsUsado: d(fgtsUsado), fgtsPrestacoes: d(fgtsPrestacoes), jurosPagos: d(gt.juros), trPaga: d(gt.trPaga),
-      economizado: ehRef ? null : { juros: d(ec.juros), tr: d(ec.tr), anos: ec.anos, meses: ec.meses },
+      custoBolso, fgtsUsado, fgtsPrestacoes, jurosPagos: gt.juros + corr(at, J), trPaga: gt.trPaga + corr(at, TR),
+      // projetado: a TR somada de economizado (trTotal) é Σ (saldoCorrigido − saldoInicial)
+      economizado: ehRef ? null : { juros: ec.juros + corr(refMs, J) - corr(ms, J), tr: ec.tr + corr(refMs, TR) - corr(ms, TR), anos: ec.anos, meses: ec.meses },
       marcos: [2, 3].map(fx => { const a = mc.find(x => x.faixa === fx)?.competencia ?? null, b = mRef.find(x => x.faixa === fx)?.competencia ?? null;
         return { faixa: fx, ...marca(a), referencia: marca(b), mesesAntecipados: a && b ? mesesEntre(a, b) : null }; }) };
   });

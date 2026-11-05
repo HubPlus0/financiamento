@@ -128,28 +128,38 @@ const json = x => JSON.parse(JSON.stringify(x));
   const cp = PN.painelComparativo(raw, 10, false), gr = PN.seriesGraficos(raw);
   assert.deepStrictEqual(json(st), st); assert.deepStrictEqual(json(cp), cp); assert.deepStrictEqual(json(gr), gr);
 
-  // ---- comparativo: inflação muda TODO valor monetário, pelo fator
-  const CAMPOS = ['patrimonio', 'saldoDevedor', 'carteira', 'custoBolso', 'fgtsUsado', 'jurosPagos', 'trPaga'];
-  const monetarios = c => [...CAMPOS.map(k => [k, c[k]]), ...Object.entries(c.composicao).map(([k, v]) => ['composicao.' + k, v]),
+  // ---- comparativo: em reais de hoje, saldos dividem pelo fator do horizonte e fluxos pelo fator de cada mês
+  const SALDOS = c => [['patrimonio', c.patrimonio], ['saldoDevedor', c.saldoDevedor], ['carteira', c.carteira], ...Object.entries(c.composicao).map(([k, v]) => ['composicao.' + k, v])];
+  const FLUXOS = c => [['custoBolso', c.custoBolso], ['fgtsUsado', c.fgtsUsado], ['jurosPagos', c.jurosPagos], ['trPaga', c.trPaga],
     ...(c.economizado ? [['economizado.juros', c.economizado.juros], ['economizado.tr', c.economizado.tr]] : [])];
+  const Pp = PN.preparar(raw);
   for (const h of [5, 10, 15, 'quitacao']) {
     const a = PN.painelComparativo(raw, h, false), b = PN.painelComparativo(raw, h, true);
     assert.strictEqual(a.fator, 1); assert(b.fator > 1); perto(b.fator, 1.04 ** a.anos, 1e-12, 'fator = (1+IPCA)^anos');
     assert.strictEqual(a.cenarios.length, 4);
     let mudou = 0;
-    a.cenarios.forEach((ca, k) => monetarios(ca).forEach(([nome, v], n) => {
-      const w = monetarios(b.cenarios[k])[n][1];
-      perto(w, v / b.fator, 1e-6, `${h} ${ca.id} ${nome}`);
-      if (v !== 0) { assert.notStrictEqual(w, v, `${h} ${ca.id} ${nome} não mudou`); mudou++; }
-    }));
+    a.cenarios.forEach((ca, k) => {
+      SALDOS(ca).forEach(([nome, v], n) => { const w = SALDOS(b.cenarios[k])[n][1]; perto(w, v / b.fator, 1e-6, `${h} ${ca.id} ${nome}`); if (v !== 0) mudou++; });
+      FLUXOS(ca).forEach(([nome, v], n) => { // positivo: entre v/fator e v (exceto o economizado, que é diferença)
+        const w = FLUXOS(b.cenarios[k])[n][1];
+        if (v > 0 && !nome.startsWith('economizado')) { assert(w < v && w > v / b.fator - 1e-6, `${h} ${ca.id} ${nome}: ${w} fora de (${v / b.fator}, ${v})`); mudou++; }
+      });
+      // custo do bolso a preços de hoje = Σ do mês ÷ (1+IPCA)^(meses/12)
+      const ms = Pp.proj[ca.id].filter(m => m.competencia <= a.competencia);
+      const esperado = ms.reduce((s, m, j) => s + (m.encargo - (m.fgtsPrestacao ?? 0) + m.amortBolso + m.aporte) / 1.04 ** (j / 12), 0);
+      perto(b.cenarios[k].custoBolso, esperado, 1e-6, `${h} ${ca.id} custo do bolso mês a mês`);
+      perto(ca.custoBolso, ms.at(-1).custoBolso, 1e-6, `${h} ${ca.id} custo do bolso nominal`);
+    });
     assert(mudou > 20);
     a.cenarios.forEach((ca, k) => { assert.deepStrictEqual(ca.quitacao, b.cenarios[k].quitacao); assert.strictEqual(ca.economizado?.anos, b.cenarios[k].economizado?.anos); });
     // o melhor é o de maior patrimônio; patrimônio = imóvel − dívida + carteira + FGTS
     const top = a.cenarios.reduce((x, y) => (y.patrimonio > x.patrimonio ? y : x));
     assert.strictEqual(a.melhor, top.id);
     a.cenarios.forEach(c => perto(c.patrimonio, c.composicao.imovelLiquido - c.composicao.divida + c.composicao.carteira + c.composicao.fgts, 1e-6, 'composição'));
-    // custo do bolso igual em todos os cenários
-    perto(Math.max(...a.cenarios.map(c => c.custoBolso)), Math.min(...a.cenarios.map(c => c.custoBolso)), 0.01, 'custo do bolso igual');
+    // custo do bolso igual em todos os cenários; a referência (não fazer nada) gasta menos e não tem carteira
+    const meus = a.cenarios.filter(c => !c.referencia), rf = a.cenarios.find(c => c.referencia);
+    perto(Math.max(...meus.map(c => c.custoBolso)), Math.min(...meus.map(c => c.custoBolso)), 0.01, 'custo do bolso igual');
+    assert(rf.custoBolso < meus[0].custoBolso && rf.carteira === 0);
     assert.strictEqual(a.cenarios.find(c => c.referencia).economizado, null);
     a.cenarios.filter(c => !c.referencia).forEach(c => { assert(c.economizado.juros >= -1e-6); c.marcos.forEach(m => assert(m.mesesAntecipados == null || m.mesesAntecipados >= 0)); });
   }

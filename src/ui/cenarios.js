@@ -154,7 +154,7 @@ export async function montarCenarios(el) {
     const val = manual ? validarMes(estado, cen, orc, prem, comp, v) : { ok: true, erros: [] };
     const p = manual ? previa(estado, cen, orc, prem, comp, v, 10) : null;
     const tv = v.amortBolso + v.amortFGTS + v.resgate;
-    $('#e-hint', el).innerHTML = `Sai do bolso ${R((refMes?.encargo ?? 0) + v.extra)} (parcela ${R(refMes?.encargo)} + extra) em todos os cenários. O que muda é só para onde vai.`;
+    $('#e-hint', el).innerHTML = `Sai do bolso ${R((refMes?.encargo ?? 0) + v.extra)} (parcela ${R(refMes?.encargo)} + extra) em todos os seus cenários. O que muda é só para onde vai.`;
     $('#e-cut', el).innerHTML = manual && p ? `<b>${R(tv)} → ${p.mesesReduzidos} ${p.mesesReduzidos === 1 ? 'mês' : 'meses'}</b>; corte ${p.valorDeCorte == null ? '—' : R(p.valorDeCorte)}; <b>${R(Math.max(0, p.sobraParaCarteira))}</b> vão para a carteira.` : manual ? '—' : 'Valores derivados da regra do cenário.';
     $('#e-aporte', el).innerHTML = manual && p ? `Aporte do mês na carteira: <b>${R(Math.max(0, p.aporte))}</b> (orçamento menos parcela e amortização com o bolso${p.fgtsPrestacao > 0 ? `; o FGTS pagou ${R(p.fgtsPrestacao)} da parcela` : ''}).` : '';
     const er = $('#e-errs', el); er.hidden = !val.erros.length; er.innerHTML = val.erros.map(esc).join('<br>');

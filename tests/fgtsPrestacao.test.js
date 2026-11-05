@@ -123,7 +123,7 @@ const perto = (a, b, tol, msg) => assert(Math.abs(a - b) <= tol, `${msg}: ${a} v
   const g = S.projetarGrupo(estado, grupo, orc, { p: prem2 });
   for (let k = 0; k < 24; k++) perto(g.invfp[k].aporte - g.inv[k].aporte, g.invfp[k].fgtsPrestacao, 1e-6, `aporte maior no mês ${k}`);
   assert(g.invfp[0].fgtsPrestacao > 0);
-  for (const k of [12, 60, g.ref.length]) perto(g.invfp[k - 1].custoBolso, g.ref[k - 1].custoBolso, 0.01, `custoBolso igual no mês ${k}`);
+  for (const k of [12, 60, g.ref.length]) perto(g.invfp[k - 1].custoBolso, g.inv[k - 1].custoBolso, 0.01, `custoBolso igual no mês ${k}`);
   assert(g.invfp[24].carteiraLiquida > g.inv[24].carteiraLiquida);
   assert(g.invfp[24].fgtsSaldo < g.inv[24].fgtsSaldo);
 
@@ -138,7 +138,7 @@ const perto = (a, b, tol, msg) => assert(Math.abs(a - b) <= tol, `${msg}: ${a} v
   perto(g2.tudofp[0].aporte, g2.tudo[0].aporte, 1e-6, 'amortizar tudo: aporte igual');
   perto(g2.meiofp[0].amortBolso - g2.meio[0].amortBolso, g2.meiofp[0].fgtsPrestacao / 2, 1e-6, 'dividir: metade amortiza');
   assert(ativos(g2.tudofp).length < ativos(g2.tudo).length, 'quita antes');
-  for (const c of grupo2) perto(g2[c.id].at(-1).custoBolso, g2.ref.at(-1).custoBolso, 0.01, `custoBolso igual (${c.id})`);
+  for (const c of grupo2.filter(c => c.regra !== 'referencia')) perto(g2[c.id].at(-1).custoBolso, g2.tudo.at(-1).custoBolso, 0.01, `custoBolso igual (${c.id})`);
 
   // ---- conservação em gastos e origem (FGTS × bolso)
   for (const c of grupo) {
