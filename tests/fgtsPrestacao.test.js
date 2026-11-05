@@ -233,13 +233,14 @@ const perto = (a, b, tol, msg) => assert(Math.abs(a - b) <= tol, `${msg}: ${a} v
   assert.strictEqual(I.proximoUsoFGTS(fr, 'reiniciaNoFim'), '2033-02-15');
   assert(I.podeUsarFGTS(fr, '2032-03-01') && !I.podeUsarFGTS(fr, '2032-03-01', 'reiniciaNoFim'));
   // crédito em curso: o 1º vencimento depois do pedido já abate; parcela sem o valor informado conta valor/meses
-  assert.deepStrictEqual(I.creditoFGTSPrestacao(fr, parcelas), { porMes: 500, meses: 10, restante: 5000 });
-  assert.deepStrictEqual(I.creditoFGTSPrestacao(fr, parcelas.map(({ fgtsPrestacao, ...p }) => p)), { porMes: 500, meses: 10, restante: 5000 });
+  assert.deepStrictEqual(I.creditoFGTSPrestacao(fr, parcelas), { porMes: 500, total: 12, meses: 10, restante: 5000 });
+  assert.deepStrictEqual(I.creditoFGTSPrestacao(fr, parcelas.map(({ fgtsPrestacao, ...p }) => p)), { porMes: 500, total: 12, meses: 10, restante: 5000 });
   assert.strictEqual(I.creditoFGTSPrestacao(fr.slice(0, 2), parcelas), null);
   const er = S.estadoReal({ config, parcelas, extras: [], premissas: { ...prem, ...pr }, fgtsReal: fr });
-  assert.deepStrictEqual(er.fgts.credito, { porMes: 500, meses: 10, restante: 5000 });
+  assert.deepStrictEqual(er.fgts.credito, { porMes: 500, total: 12, meses: 10, restante: 5000 });
   const pj = S.projetar(er, man(undefined), null, prem);
   assert.deepStrictEqual(pj.slice(0, 11).map(m => Math.round(m.fgtsPrestacao)), [500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 0], 'a projeção continua o pedido real');
+  assert.deepStrictEqual(pj.slice(0, 11).map(m => m.fgtsPrestacaoMes), [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, null], 'e a contagem do período');
 
   // ---- backup ida e volta com tudo o que é novo
   const stores = {

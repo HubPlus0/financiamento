@@ -27,7 +27,8 @@ export function proximoUsoFGTS(fgtsReal, janela = 'naoAfeta') {
 }
 
 /**
- * Pedido real de FGTS nas prestações ainda em curso: { porMes, meses, restante } (meses e valor ainda não abatidos) ou
+ * Pedido real de FGTS nas prestações ainda em curso: { porMes, total, meses, restante } (total = meses do período; meses e
+ * restante = o que ainda não foi abatido) ou
  * null. O abatimento começa no 1º vencimento depois do pedido; cada parcela lançada depois dele consome `fgtsPrestacao`
  * (ou valor/meses, se a parcela não informou).
  */
@@ -37,7 +38,7 @@ export function creditoFGTSPrestacao(fgtsReal, parcelas) {
   const porMes = u.valor / u.meses;
   const usadas = parcelas.filter(p => p.vencimento > u.data).sort((a, b) => (a.vencimento < b.vencimento ? -1 : 1)).slice(0, u.meses);
   const meses = u.meses - usadas.length, restante = u.valor - usadas.reduce((s, p) => s + (p.fgtsPrestacao ?? porMes), 0);
-  return meses > 0 && restante > 0.005 ? { porMes, meses, restante } : null;
+  return meses > 0 && restante > 0.005 ? { porMes, total: u.meses, meses, restante } : null;
 }
 
 export const podeUsarFGTS = (fgtsReal, data, janela) => (proximoUsoFGTS(fgtsReal, janela) ?? '') <= data;

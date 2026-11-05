@@ -11,7 +11,8 @@ const mk = (lab, cl) => `<span style="display:flex;align-items:center;gap:6px"><
 const evHTML = e => (e.tipo === 'amortizacao'
   ? `<span class="ev ${e.origem === 'fgts' ? 'fgts' : 'am'}">${ic('amort', 13)}${e.origem === 'resgate' ? 'Resgate da carteira' : 'Amortização' + (e.origem === 'fgts' ? ' FGTS' : '')} ${R(e.valor)}</span>`
   : e.tipo === 'janela-fgts' ? `<span class="ev jan">${ic('cal', 13)}Janela do FGTS abre${e.saldo != null ? ' · ' + R(e.saldo, 0) : ''}</span>`
-  : e.tipo === 'fgts-prestacao' ? `<span class="ev fgts">FGTS paga ${R(e.valor)} da parcela</span>` : '');
+  : e.tipo === 'fgts-prestacao' ? `<span class="ev fgts">FGTS abate ${R(e.valor)} da parcela</span>`
+  : e.tipo === 'fgts-pedido' ? `<span class="ev fgts">${ic('cal', 13)}Pedido de FGTS nas prestações ${R(e.valor)}</span>` : '');
 
 function rowHTML(r) {
   const a = Math.max(0, r.amortizacao), tr = Math.max(0, r.tr), j = Math.max(0, r.juros), t = (a + tr + j) || 1;
@@ -116,7 +117,7 @@ export function statusView(d, p) {
       <dt>${mk('Juros', 'var(--s1)')}</dt><dd>${R(pr.juros)}</dd>
       <dt>${mk('Seguros e taxa', 'var(--s4)')}</dt><dd>${R(pr.seguros + pr.taxa)}</dd>
     </dl>
-    ${pr.fgtsPrestacao > 0 ? `<div class="sub">O FGTS paga <b>${R(pr.fgtsPrestacao)}</b> (mês ${pr.fgtsPrestacaoMes} de 12 no plano ativo); do bolso sai <b>${R(pr.doBolso)}</b>.</div>` : ''}
+    ${pr.fgtsPrestacao > 0 ? `<div class="sub">O FGTS abate <b>${R(pr.fgtsPrestacao)}</b> (mês ${pr.fgtsPrestacaoMes} do período, no plano ativo); do bolso sai <b>${R(pr.doBolso)}</b>.</div>` : ''}
     <div class="cutbox"${f === 1 ? ' style="background:color-mix(in srgb,var(--f1) 10%,var(--surface))"' : ''}>A TR do mês soma <b>${R(pr.tr)}</b> ao saldo e a amortização é ${R(pr.amortizacao)}. ${f === 1 ? 'Por isso o saldo ainda sobe com a parcela paga.' : FX[f][2] + '.'}</div>
     <div class="sub">Parcela original ${R(p.parcela.original.encargo)} (${p.parcela.original.rotulo}) → agora ${R(p.parcela.atual.encargo)}</div>
   </article>

@@ -152,7 +152,7 @@ export function projetar(estado, cenario, orcamento, premissas, { base, ate } = 
   const rfp = regraFGTSPrestacao(premissas); // FGTS nas prestações (cenario.fgtsPrestacao; o automático começa em fpDesde)
   // período em curso: { mes, n, porMes, restante }; começa com o pedido real ainda não consumido, se houver
   const cr = fg?.credito;
-  let bloco = cr?.meses > 0 && cr.restante > 0.005 ? { mes: 0, n: cr.meses, porMes: cr.porMes, restante: cr.restante } : null, pedidos = 0;
+  let bloco = cr?.meses > 0 && cr.restante > 0.005 ? { mes: (cr.total ?? cr.meses) - cr.meses, n: cr.total ?? cr.meses, porMes: cr.porMes, restante: cr.restante } : null, pedidos = 0;
   const podePedir = c => !!fpc && (fpc.modo === 'auto' ? !!fpDesde && c >= fpDesde : c >= fpc.inicio && (!!fpc.renovar || pedidos === 0));
   const meses = []; let custo = 0;
   // carteira por lotes: só existe com orçamento (sem ele o aporte é null e carteiraBruta/Liquida ficam null)

@@ -1,7 +1,7 @@
 // Tela Lançar: parcela (2 campos + Detalhar), previsão congelada ao lado, amortização extra e saldo do FGTS.
 import { listar, salvar } from '../db.js';
 import { replayHistorico, lancarParcela, conferirExtra, proximoVencimento } from '../engine.js';
-import { saldoFGTSReal, proximoUsoFGTS, podeUsarFGTS } from '../invest.js';
+import { saldoFGTSReal, proximoUsoFGTS, podeUsarFGTS, creditoFGTSPrestacao } from '../invest.js';
 import { aoMudarReal } from './real.js';
 import { $, R, RS, N, PC, nBR, num, esc, ic, dataBR, rotuloMes, toast } from './comum.js';
 
@@ -44,6 +44,7 @@ export async function montarLancar(el, config) {
   const prem = premissas.find(p => p.id === 'padrao') ?? premissas[0];
   const linha = replayHistorico(config, parcelas, extras, prem);
   const venc = proximoVencimento(parcelas, config) ?? '';
+  const credito = creditoFGTSPrestacao(fgts, parcelas); // pedido de FGTS nas prestações ainda abatendo
   const janela = prem.fgtsPrestacaoJanela ?? 'naoAfeta', proxFGTS = proximoUsoFGTS(fgts, janela), saldoFGTS = saldoFGTSReal(fgts);
   const ultFGTS = fgts.filter(m => m.tipo === 'uso-amortizacao').map(m => m.data).sort().pop();
   const prev0 = venc ? previsao(cenarios, versoes, venc.slice(0, 7)) : {};
@@ -58,7 +59,7 @@ export async function montarLancar(el, config) {
     <details class="det"><summary><span>Detalhar <span class="muted" style="font-weight:500">· opcional</span></span><span class="chev">${ic('chev', 20)}</span></summary>
       <div class="detbody">
         ${data('vencimento', 'Vencimento', venc)}${data('dataPagamento', 'Data do pagamento', '')}
-        <div class="field" style="grid-column:1/-1"><label for="f-fgtsPrestacao">Parte paga com FGTS</label><div class="inp sm"><span>R$</span><input id="f-fgtsPrestacao" name="fgtsPrestacao" inputmode="decimal" placeholder="0,00" autocomplete="off"></div><div class="hint">Se o FGTS pagou parte desta parcela (até ${Math.round((prem.fgtsPrestacaoPct ?? 0.8) * 100)}%). O valor pago acima é a parcela inteira; o app desconta essa parte do saldo do FGTS.</div></div>
+        <div class="field" style="grid-column:1/-1"><label for="f-fgtsPrestacao">Parte abatida com FGTS</label><div class="inp sm"><span>R$</span><input id="f-fgtsPrestacao" name="fgtsPrestacao" inputmode="decimal" placeholder="${credito ? N(credito.porMes) : '0,00'}" autocomplete="off"></div><div class="hint">${credito ? `Há um pedido de FGTS nas prestações em curso: ${R(credito.porMes)} por mês, mais ${credito.meses} ${credito.meses === 1 ? 'mês' : 'meses'}. Vazio usa esse valor. ` : ''}O valor pago acima é a parcela inteira. O saldo do FGTS já caiu no pedido (lance o pedido em Saldo do FGTS, abaixo).</div></div>
         ${campo('devido', 'Valor devido')}${campo('amortizacao', 'Amortização')}${campo('juros', 'Juros')}${campo('correcao', 'Correção (TR)')}${campo('mip', 'MIP')}${campo('dfi', 'DFI')}${campo('taxa', 'Taxa')}
         <div class="hint" style="grid-column:1/-1">Se digitar a quebra da Caixa e ela diferir do cálculo em mais de R$ 0,05, o valor da Caixa vale e o app avisa.</div>
       </div></details>
@@ -86,11 +87,16 @@ export async function montarLancar(el, config) {
     <form id="lf" class="detbody" autocomplete="off">
       <div class="sub" style="grid-column:1/-1">Próxima amortização com FGTS: ${proxFGTS ? dataBR(proxFGTS) : 'livre'}.</div>
       ${campo('valor', 'Saldo informado', saldoFGTS == null ? '0,00' : N(saldoFGTS), 'R$', 'g-')}${data('data', 'Em', hojeISO(), 'g-')}
-      <button class="btn block" style="grid-column:1/-1" type="submit">Atualizar saldo do FGTS</button></form></details>`;
+      <button class="btn block" style="grid-column:1/-1" type="submit">Atualizar saldo do FGTS</button></form>
+    <form id="lfp" class="detbody" autocomplete="off">
+      <div class="sub" style="grid-column:1/-1"><b style="color:var(--ink)">Usar FGTS em 12 prestações</b> · o valor pedido sai todo do FGTS na data do pedido e abate a prestação em ${Math.min(12, e.prazo ?? 12)} partes iguais.${credito ? ` Em curso: ${R(credito.porMes)} por mês, mais ${credito.meses} ${credito.meses === 1 ? 'mês' : 'meses'}.` : ''}</div>
+      ${campo('valor', 'Valor pedido', '0,00', 'R$', 'p-')}${data('data', 'Data do pedido', hojeISO(), 'p-')}
+      <button class="btn block" style="grid-column:1/-1" type="submit">Lançar pedido</button></form></details>`;
 
   const lp = $('#lp', el), lx = $('#lx', el), lf = $('#lf', el);
   const calcP = () => {
     const x = lerForm(lp);
+    if (credito && x.fgtsPrestacao == null && x.vencimento > fgts.filter(m => m.tipo === 'uso-prestacao').map(m => m.data).sort().pop()) x.fgtsPrestacao = Math.round(credito.porMes * 100) / 100;
     return x.pago == null || x.saldoApos == null || !x.vencimento ? null : lancarParcela(linha, x, config, prem);
   };
   const atualizarP = () => {
@@ -109,7 +115,6 @@ export async function montarLancar(el, config) {
     if (!r) return toast('Informe o valor pago e o saldo depois do pagamento.', 4500);
     if (parcelas.some(p => p.vencimento === r.registro.vencimento)) return toast('Esse vencimento já foi lançado.', 4500);
     await salvar('parcelasReais', r.registro);
-    if (r.registro.fgtsPrestacao > 0) await salvar('fgtsReal', { data: r.registro.vencimento, tipo: 'uso-prestacao', competencia: r.registro.competencia, valor: r.registro.fgtsPrestacao });
     const n = await aoMudarReal();
     toast(`Parcela de ${rotuloMes(r.registro.competencia)} lançada. ${n} ${n === 1 ? 'cenário ganhou' : 'cenários ganharam'} uma versão nova.`, 4500);
   });
@@ -143,6 +148,18 @@ export async function montarLancar(el, config) {
     if (x.origem === 'fgts') await salvar('fgtsReal', { data: x.data, tipo: 'uso-amortizacao', valor: x.valor });
     await aoMudarReal();
     toast('Amortização lançada.');
+  });
+
+  $('#lfp', el).addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const f = lerForm(ev.target);
+    if (f.valor == null || !f.data) return toast('Informe o valor e a data do pedido.', 4500);
+    if (credito) return toast('Já há um pedido em curso: só dá para pedir de novo quando ele terminar.', 5000);
+    const meses = Math.min(12, e.prazo ?? 12);
+    if (saldoFGTS != null && f.valor > saldoFGTS + 0.005) toast('O pedido passa do saldo do FGTS registrado aqui. Lançado mesmo assim (é o real).', 5000);
+    await salvar('fgtsReal', { data: f.data, tipo: 'uso-prestacao', valor: f.valor, meses });
+    await aoMudarReal();
+    toast(`Pedido lançado: ${R(f.valor / meses)} por mês por ${meses} meses.`, 4500);
   });
 
   lf.addEventListener('submit', async ev => {

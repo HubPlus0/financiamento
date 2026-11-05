@@ -17,7 +17,7 @@ const GRUPOS = [
     ['valorizacaoImovelAA', 'Valorização do imóvel', 'p', '% a.a.'], ['custoVendaPct', 'Custo de venda', 'p', '%', 'corretagem'],
     ['irGanhoCapitalImovel', 'IR de ganho de capital do imóvel', 'b', '', '15%, conservador'], ['ipcaAA', 'IPCA', 'p', '% a.a.']]],
   ['FGTS', [['fgtsRendAA', 'Rendimento do FGTS (mais TR)', 'p', '% a.a.'],
-    ['fgtsPrestacaoPct', 'FGTS nas prestações: até', 'p', '% da prestação', '12 meses seguidos, renovável'],
+    ['fgtsPrestacaoPct', 'FGTS nas prestações: até', 'p', '% da prestação', 'teto do pedido = % × prestação × 12; sai todo do FGTS no pedido'],
     ['fgtsPrestacaoBase', 'FGTS nas prestações: o percentual é sobre', 's', '', '', null, BASE_FP],
     ['fgtsPrestacaoJanela', 'FGTS nas prestações e a amortização com FGTS', 's', '', '', null, JANELA_FP]]],
   ['Seguros', [['mipTaxa', 'MIP (taxa sobre o saldo)', 'p', '%', '', 6], ['dfiTaxa', 'DFI (taxa sobre o imóvel)', 'p', '%', '', 6]]],
